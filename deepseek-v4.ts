@@ -65,9 +65,7 @@ type DeepSeekMenuAction =
   | "reset"
   | "cache"
   | "close";
-type DeepSeekResetAction =
-  | { kind: "all" }
-  | { kind: "thread"; name: string };
+type DeepSeekResetAction = { kind: "all" } | { kind: "thread"; name: string };
 
 interface DeepSeekRuntimeState {
   defaultEffort: Effort;
@@ -958,17 +956,49 @@ const CallFunctionParams = Type.Object({
 interface ToolServices {
   beta: BetaApi;
   responses: ResponsesApi;
+  runtimeState: DeepSeekRuntimeState;
   telemetry: TelemetryStore;
   threads: ThreadStore;
 }
 
+const notifyDeepSeekDisabled = (context: ExtensionContext): void => {
+  context.ui.notify(
+    "DeepSeek integration is disabled. Run /deepseek to enable it.",
+    "warning"
+  );
+};
+
+const requireDeepSeekEnabled = (
+  runtimeState: DeepSeekRuntimeState,
+  context: ExtensionContext
+): boolean => {
+  if (runtimeState.enabled) {
+    return true;
+  }
+  notifyDeepSeekDisabled(context);
+  return false;
+};
+
+const createDisabledToolResult = () => ({
+  content: [
+    {
+      text: "DeepSeek integration is disabled. Run /deepseek to enable it.",
+      type: "text" as const,
+    },
+  ],
+  details: { disabled: true },
+});
+
 const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
-  const { responses, telemetry, threads } = services;
+  const { responses, runtimeState, telemetry, threads } = services;
 
   pi.registerTool({
     description:
       "Send a message to DeepSeek V4 Flash in a named conversation thread and get the reply. Threads are stateful across calls and keep the full history, so DeepSeek can be run as a sub-agent. Use ds_chat_reset to clear a thread.",
     async execute(_toolCallId, params, signal, _onUpdate, context) {
+      if (!requireDeepSeekEnabled(runtimeState, context)) {
+        return createDisabledToolResult();
+      }
       return await threads.withLock(params.thread, async () => {
         const thread = threads.getOrCreate(params.thread);
         if (params.system && thread.round === 0) {
@@ -1020,7 +1050,10 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
   pi.registerTool({
     description:
       "Reset one named DeepSeek chat thread (or all threads), discarding its history.",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, context) {
+      if (!requireDeepSeekEnabled(runtimeState, context)) {
+        return createDisabledToolResult();
+      }
       await threads.reset(params.thread);
       return {
         content: [
@@ -1042,12 +1075,15 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
 };
 
 const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
-  const { beta, telemetry } = services;
+  const { beta, runtimeState, telemetry } = services;
 
   pi.registerTool({
     description:
       'Beta Chat Prefix Completion: give a user instruction plus an assistant prefix (e.g. "```python\\n") and get the model\'s continuation, optionally stopping at a sequence like "```". Use for code/structured completions.',
     async execute(_toolCallId, params, signal, _onUpdate, context) {
+      if (!requireDeepSeekEnabled(runtimeState, context)) {
+        return createDisabledToolResult();
+      }
       const body: JsonObject = {
         messages: [
           { content: params.prompt, role: "user" },
@@ -1104,6 +1140,9 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
     description:
       "Beta Fill-In-the-Middle completion: give the code before the gap (prompt) and optionally the code after it (suffix); DeepSeek completes the middle. Max tokens is capped at 4K by the API.",
     async execute(_toolCallId, params, signal, _onUpdate, context) {
+      if (!requireDeepSeekEnabled(runtimeState, context)) {
+        return createDisabledToolResult();
+      }
       const body: JsonObject = {
         model: MODEL_ID,
         prompt: params.prompt,
@@ -1159,12 +1198,15 @@ const registerResponsesTools = (
   pi: ExtensionAPI,
   services: ToolServices
 ): void => {
-  const { responses, telemetry } = services;
+  const { responses, runtimeState, telemetry } = services;
 
   pi.registerTool({
     description:
       "Run DeepSeek's server-side web search (Responses API web_search tool) for a query and return the model's answer, including citations where available.",
     async execute(_toolCallId, params, signal, _onUpdate, context) {
+      if (!requireDeepSeekEnabled(runtimeState, context)) {
+        return createDisabledToolResult();
+      }
       const result = await responses.webSearch(
         params.query,
         params.reasoning_effort,
@@ -1198,12 +1240,15 @@ const registerFunctionTool = (
   pi: ExtensionAPI,
   services: ToolServices
 ): void => {
-  const { beta, telemetry } = services;
+  const { beta, runtimeState, telemetry } = services;
 
   pi.registerTool({
     description:
       "Force DeepSeek V4 Flash to produce the named strict-mode function call for the given JSON schema. This helper uses non-thinking mode because DeepSeek rejects forced tool choice in thinking mode. The schema is normalized to DeepSeek's strict dialect (all object properties required, additionalProperties false, strings with supported pattern/format only, numbers with bounds/multipleOf, arrays without min/maxItems, enum/anyOf/$ref/$def). Returns the parsed arguments.",
     async execute(_toolCallId, params, signal, _onUpdate, context) {
+      if (!requireDeepSeekEnabled(runtimeState, context)) {
+        return createDisabledToolResult();
+      }
       const strictParameters = toStrictSchema(params.parameters);
       const body: JsonObject = {
         messages: [
@@ -1363,20 +1408,44 @@ const stripUnsupportedThinkingParameters = (
   return payload;
 };
 
+const applyDefaultReasoningEffort = (
+  payload: JsonObject,
+  defaultEffort: Effort
+): JsonObject => {
+  const reasoning = getObject(payload, "reasoning");
+  if (reasoning && Object.hasOwn(reasoning, "effort")) {
+    return payload;
+  }
+  if (reasoning) {
+    reasoning.effort = defaultEffort;
+  } else {
+    payload.reasoning = { effort: defaultEffort };
+  }
+  return payload;
+};
+
 const registerLifecycleHandlers = (
   pi: ExtensionAPI,
+  runtimeState: DeepSeekRuntimeState,
   telemetry: TelemetryStore,
   threads: ThreadStore
 ): void => {
   pi.on("before_provider_request", (event) => {
+    if (!runtimeState.enabled) {
+      return;
+    }
     const payload = isJsonObject(event.payload) ? event.payload : undefined;
     if (!payload || payload.model !== MODEL_ID) {
       return;
     }
+    applyDefaultReasoningEffort(payload, runtimeState.defaultEffort);
     return stripUnsupportedThinkingParameters(payload);
   });
 
   pi.on("turn_end", (event: TurnEndEvent, context) => {
+    if (!runtimeState.enabled) {
+      return;
+    }
     const { message } = event;
     if (!message || message.provider !== PROVIDER_ID || !message.usage) {
       return;
@@ -1413,51 +1482,281 @@ const registerLifecycleHandlers = (
 
 interface CommandServices {
   responses: ResponsesApi;
+  runtimeState: DeepSeekRuntimeState;
   telemetry: TelemetryStore;
+  threads: ThreadStore;
 }
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+const runOneShotChat = async (
+  pi: ExtensionAPI,
+  prompt: string,
+  context: ExtensionContext,
+  services: CommandServices
+): Promise<void> => {
+  const { responses, runtimeState, telemetry } = services;
+  if (!requireDeepSeekEnabled(runtimeState, context)) {
+    return;
+  }
+  if (!prompt) {
+    context.ui.notify("Usage: /ds <prompt>", "info");
+    return;
+  }
+
+  try {
+    const result = await responses.chat(
+      [
+        {
+          content: [{ text: prompt, type: "input_text" }],
+          role: "user",
+        },
+      ],
+      {
+        effort: runtimeState.defaultEffort,
+        signal: context.signal,
+      }
+    );
+    const usage = telemetry.record(
+      telemetry.mapResponsesUsage(result.usage, "command")
+    );
+    telemetry.setFooter(context);
+    pi.appendEntry(THREADS_ENTRY, {
+      prompt,
+      reply: result.text || "(empty reply)",
+      thinking: result.thinking,
+      ts: Date.now(),
+      usage,
+    });
+  } catch (error) {
+    context.ui.notify(`DeepSeek error: ${getErrorMessage(error)}`, "error");
+  }
+};
+
+const showCacheTelemetry = (
+  pi: ExtensionAPI,
+  context: ExtensionContext,
+  services: CommandServices
+): void => {
+  const { runtimeState, telemetry } = services;
+  if (!requireDeepSeekEnabled(runtimeState, context)) {
+    return;
+  }
+  const lastUsage = telemetry.getLastUsage();
+  if (!lastUsage) {
+    context.ui.notify(
+      "No DeepSeek request is recorded in this session. Send a message first.",
+      "info"
+    );
+    return;
+  }
+  pi.appendEntry(CACHE_CARD_ENTRY, {
+    history: telemetry.getHistory(),
+    ts: Date.now(),
+    usage: lastUsage,
+  });
+  context.ui.setStatus(FOOTER_KEY, undefined);
+  telemetry.setFooter(context);
+};
+
+const getDeepSeekMenuOptions = (
+  runtimeState: DeepSeekRuntimeState
+): DeepSeekMenuOption[] => [
+  {
+    action: "toggle",
+    label: `${runtimeState.enabled ? "Disable" : "Enable"} integration (currently ${runtimeState.enabled ? "enabled" : "disabled"})`,
+  },
+  {
+    action: "effort",
+    label: `Default thinking effort: ${runtimeState.defaultEffort}`,
+  },
+  { action: "chat", label: "One-shot chat (/ds)" },
+  { action: "reset", label: "Reset chat threads" },
+  { action: "cache", label: "Show cache telemetry (/ds-cache)" },
+  { action: "close", label: "Close" },
+];
+
+const selectMenuAction = async (
+  context: ExtensionContext,
+  runtimeState: DeepSeekRuntimeState
+): Promise<DeepSeekMenuAction | undefined> => {
+  const options = getDeepSeekMenuOptions(runtimeState);
+  const selectedLabel = await context.ui.select(
+    "DeepSeek integration",
+    options.map(({ label }) => label)
+  );
+  return options.find(({ label }) => label === selectedLabel)?.action;
+};
+
+const isEffort = (value: string): value is Effort =>
+  value === "low" || value === "high" || value === "max";
+
+const selectDefaultEffort = async (
+  context: ExtensionContext,
+  runtimeState: DeepSeekRuntimeState
+): Promise<void> => {
+  const options: Effort[] = ["low", "high", "max"];
+  const labels = options.map((effort) =>
+    effort === runtimeState.defaultEffort ? `${effort} (current)` : effort
+  );
+  const selectedLabel = await context.ui.select(
+    `Default thinking effort: ${runtimeState.defaultEffort}`,
+    labels
+  );
+  const selectedEffort = selectedLabel?.split(" ", 1)[0];
+  if (!(selectedEffort && isEffort(selectedEffort))) {
+    return;
+  }
+  runtimeState.defaultEffort = selectedEffort;
+  context.ui.notify(
+    `Default DeepSeek thinking effort set to ${selectedEffort}.`,
+    "info"
+  );
+};
+
+const selectResetAction = async (
+  context: ExtensionContext,
+  threads: ThreadStore
+): Promise<DeepSeekResetAction | undefined> => {
+  const threadNames = Object.keys(threads.snapshot()).sort();
+  const options: Array<{
+    action: DeepSeekResetAction;
+    label: string;
+  }> = [
+    {
+      action: { kind: "all" },
+      label: `All threads (${threadNames.length})`,
+    },
+    ...threadNames.map((name) => ({
+      action: { kind: "thread" as const, name },
+      label: `Thread: ${name}`,
+    })),
+  ];
+  const selectedLabel = await context.ui.select(
+    "Reset DeepSeek chat",
+    options.map(({ label }) => label)
+  );
+  return options.find(({ label }) => label === selectedLabel)?.action;
+};
+
+const resetThreadsFromMenu = async (
+  context: ExtensionContext,
+  services: CommandServices
+): Promise<void> => {
+  const { runtimeState, threads } = services;
+  if (!requireDeepSeekEnabled(runtimeState, context)) {
+    return;
+  }
+  const action = await selectResetAction(context, threads);
+  if (!action) {
+    return;
+  }
+  const target =
+    action.kind === "all"
+      ? "all DeepSeek chat threads"
+      : `thread "${action.name}"`;
+  const confirmed = await context.ui.confirm(
+    "Reset DeepSeek chat",
+    `Reset ${target}? This removes its saved conversation history.`
+  );
+  if (!confirmed) {
+    return;
+  }
+  await threads.reset(action.kind === "thread" ? action.name : undefined);
+  context.ui.notify(
+    action.kind === "all"
+      ? "All DeepSeek chat threads reset."
+      : `DeepSeek chat thread "${action.name}" reset.`,
+    "info"
+  );
+};
+
+const MENU_STATUS: Record<DeepSeekMenuAction, string> = {
+  cache: "DeepSeek: loading cache telemetry...",
+  chat: "DeepSeek: one-shot chat...",
+  close: "DeepSeek",
+  effort: "DeepSeek: changing thinking effort...",
+  reset: "DeepSeek: resetting chat threads...",
+  toggle: "DeepSeek: changing integration state...",
+};
+
+const runMenuAction = async (
+  action: DeepSeekMenuAction,
+  pi: ExtensionAPI,
+  context: ExtensionContext,
+  services: CommandServices
+): Promise<void> => {
+  context.ui.setStatus(MENU_STATUS_KEY, MENU_STATUS[action]);
+  try {
+    switch (action) {
+      case "toggle":
+        services.runtimeState.enabled = !services.runtimeState.enabled;
+        if (services.runtimeState.enabled) {
+          services.telemetry.setFooter(context);
+        } else {
+          context.ui.setStatus(FOOTER_KEY, undefined);
+        }
+        context.ui.notify(
+          `DeepSeek integration ${services.runtimeState.enabled ? "enabled" : "disabled"}.`,
+          "info"
+        );
+        break;
+      case "effort":
+        await selectDefaultEffort(context, services.runtimeState);
+        break;
+      case "chat": {
+        if (!requireDeepSeekEnabled(services.runtimeState, context)) {
+          break;
+        }
+        const prompt = await context.ui.input(
+          "DeepSeek one-shot chat",
+          "Enter a prompt"
+        );
+        if (prompt?.trim()) {
+          await runOneShotChat(pi, prompt.trim(), context, services);
+        }
+        break;
+      }
+      case "reset":
+        await resetThreadsFromMenu(context, services);
+        break;
+      case "cache":
+        showCacheTelemetry(pi, context, services);
+        break;
+      case "close":
+        break;
+      default:
+        throw new Error(`Unknown DeepSeek menu action: ${String(action)}`);
+    }
+  } finally {
+    context.ui.setStatus(MENU_STATUS_KEY, undefined);
+  }
+};
+
+const openDeepSeekMenu = async (
+  pi: ExtensionAPI,
+  context: ExtensionContext,
+  services: CommandServices
+): Promise<void> => {
+  let action = await selectMenuAction(context, services.runtimeState);
+  while (action && action !== "close") {
+    // biome-ignore lint/performance/noAwaitInLoops: Menu actions must run in user-selected order.
+    await runMenuAction(action, pi, context, services);
+    action = await selectMenuAction(context, services.runtimeState);
+  }
+};
+
 const registerCommands = (
   pi: ExtensionAPI,
   services: CommandServices
 ): void => {
-  const { responses, telemetry } = services;
-
   pi.registerCommand("ds", {
     description:
       "One-shot chat with DeepSeek V4 Flash (Responses API). Usage: /ds <prompt>",
     handler: async (args, context) => {
       const prompt = args.trim();
-      if (!prompt) {
-        context.ui.notify("Usage: /ds <prompt>", "info");
-        return;
-      }
-
-      try {
-        const result = await responses.chat(
-          [
-            {
-              content: [{ text: prompt, type: "input_text" }],
-              role: "user",
-            },
-          ],
-          { signal: context.signal }
-        );
-        const usage = telemetry.mapResponsesUsage(result.usage, "command");
-        telemetry.record(usage);
-        telemetry.setFooter(context);
-        pi.appendEntry(THREADS_ENTRY, {
-          prompt,
-          reply: result.text || "(empty reply)",
-          thinking: result.thinking,
-          ts: Date.now(),
-          usage,
-        });
-      } catch (error) {
-        context.ui.notify(`DeepSeek error: ${getErrorMessage(error)}`, "error");
-      }
+      await runOneShotChat(pi, prompt, context, services);
     },
   });
 
@@ -1465,21 +1764,24 @@ const registerCommands = (
     description:
       "Show KV-cache hit/miss tokens and cost for the last DeepSeek request",
     handler: (_args, context) => {
-      const lastUsage = telemetry.getLastUsage();
-      if (!lastUsage) {
+      showCacheTelemetry(pi, context, services);
+    },
+  });
+
+  pi.registerCommand("deepseek", {
+    description:
+      "Configure DeepSeek, run one-shot chat, reset threads, or show cache telemetry",
+    handler: async (_args, context) => {
+      try {
+        await openDeepSeekMenu(pi, context, services);
+      } catch (error) {
         context.ui.notify(
-          "No DeepSeek request recorded in this session yet — send a message first.",
-          "info"
+          `DeepSeek menu error: ${getErrorMessage(error)}`,
+          "error"
         );
-        return;
+      } finally {
+        context.ui.setStatus(MENU_STATUS_KEY, undefined);
       }
-      pi.appendEntry(CACHE_CARD_ENTRY, {
-        history: telemetry.getHistory(),
-        ts: Date.now(),
-        usage: lastUsage,
-      });
-      context.ui.setStatus(FOOTER_KEY, undefined);
-      telemetry.setFooter(context);
     },
   });
 };
@@ -1593,17 +1895,24 @@ const registerRenderers = (pi: ExtensionAPI): void => {
 // ---------------------------------------------------------------------------
 
 export default (pi: ExtensionAPI): void => {
+  const runtimeState = createRuntimeState();
   const auth = createAuthService();
   const http = createHttpClient(auth);
   const responses = createResponsesApi(http);
   const beta = createBetaApi(http);
-  const telemetry = createTelemetryStore();
+  const telemetry = createTelemetryStore(runtimeState);
   const threads = createThreadStore();
-  const services: ToolServices = { beta, responses, telemetry, threads };
+  const services: ToolServices = {
+    beta,
+    responses,
+    runtimeState,
+    telemetry,
+    threads,
+  };
 
   registerProvider(pi);
-  registerLifecycleHandlers(pi, telemetry, threads);
+  registerLifecycleHandlers(pi, runtimeState, telemetry, threads);
   registerTools(pi, services);
-  registerCommands(pi, { responses, telemetry });
+  registerCommands(pi, services);
   registerRenderers(pi);
 };

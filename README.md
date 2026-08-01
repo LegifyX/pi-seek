@@ -33,11 +33,3 @@ Provider registered with `apiKey: "$DEEPSEEK_API_KEY"` (env interpolation).
 Fetch-based tools resolve `$DEEPSEEK_API_KEY` first, then fall back to the
 `apiKey` configured for `deepseek-responses` in `models.json`. No secrets in
 source.
-
-## Verify
-
-```sh
-./verify.sh            # live checks (requires a key; falls back to models.json)
-```
-
-Phases verified live on 2026-07-31 against `pi@0.83.0` (see verify.sh output).
