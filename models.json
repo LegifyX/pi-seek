@@ -6,7 +6,7 @@
       "api": "openai-responses",
       "apiKey": "${DEEPSEEK_API_KEY}",
       "compat": {
-        "supportsDeveloperRole": true,
+        "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsLongCacheRetention": false,
         "supportsStrictMode": false,
@@ -24,7 +24,7 @@
             "low": "low",
             "medium": "high",
             "high": "high",
-            "xhigh": "xhigh",
+            "xhigh": "high",
             "max": "max"
           },
           "input": ["text"],
@@ -34,7 +34,7 @@
             "cacheRead": 0.0028,
             "cacheWrite": 0
           },
-          "contextWindow": 1000000,
+          "contextWindow": 1048576,
           "maxTokens": 393216
         }
       ]
