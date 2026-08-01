@@ -673,14 +673,32 @@ const createThreadStore = (): ThreadStore => {
         continue;
       }
       const details = message.details as
-        | { threads?: Record<string, Thread> }
+        | {
+            reset?: { kind: "all" } | { kind: "thread"; name: string };
+            thread?: Thread & { name: string };
+            threads?: Record<string, Thread>;
+          }
         | undefined;
-      if (!details?.threads) {
+      if (details?.threads) {
+        // Legacy shape from versions that snapshotted the whole map.
+        threads.clear();
+        for (const [name, thread] of Object.entries(details.threads)) {
+          threads.set(name, thread);
+        }
         continue;
       }
-      threads.clear();
-      for (const [name, thread] of Object.entries(details.threads)) {
-        threads.set(name, thread);
+      if (message.toolName === "ds_chat" && details?.thread?.name) {
+        const { items, name, round, system } = details.thread;
+        threads.set(name, { items, round, system });
+      } else if (
+        message.toolName === "ds_chat_reset" &&
+        details?.reset
+      ) {
+        if (details.reset.kind === "all") {
+          threads.clear();
+        } else {
+          threads.delete(details.reset.name);
+        }
       }
     }
   };
@@ -1101,8 +1119,12 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
           details: {
             round: thread.round,
             thinking: result.thinking,
-            thread: params.thread,
-            threads: threads.snapshot(),
+            thread: {
+              items: thread.items,
+              name: params.thread,
+              round: thread.round,
+              system: thread.system,
+            },
             usage,
           },
         };
@@ -1132,7 +1154,12 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
             type: "text" as const,
           },
         ],
-        details: { thread: params.thread, threads: threads.snapshot() },
+        details: {
+          reset: params.thread
+            ? { kind: "thread" as const, name: params.thread }
+            : { kind: "all" as const },
+          thread: params.thread,
+        },
       };
     },
     label: "DeepSeek Chat Reset",
@@ -1972,6 +1999,8 @@ const registerRenderers = (pi: ExtensionAPI): void => {
 // ---------------------------------------------------------------------------
 
 export { resolveTimeoutMs, toStrictSchema };
+
+export const __test = { createThreadStore };
 
 export default (pi: ExtensionAPI): void => {
   const runtimeState = createRuntimeState();
