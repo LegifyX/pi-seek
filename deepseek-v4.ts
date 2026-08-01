@@ -1368,13 +1368,11 @@ const registerProvider = (pi: ExtensionAPI): void => {
     models: [
       {
         compat: {
-          requiresAssistantContentForToolCalls: true,
           requiresReasoningContentOnAssistantMessages: true,
           supportsDeveloperRole: false,
           supportsLongCacheRetention: false,
           supportsReasoningEffort: true,
           supportsStrictMode: false,
-          supportsToolChoice: false,
         },
         contextWindow: 1_048_576,
         cost: COST,
@@ -1447,7 +1445,11 @@ const registerLifecycleHandlers = (
       return;
     }
     const { message } = event;
-    if (!message || message.provider !== PROVIDER_ID || !message.usage) {
+    if (
+      message.role !== "assistant" ||
+      message.provider !== PROVIDER_ID ||
+      !message.usage
+    ) {
       return;
     }
     const { usage } = message;
@@ -1763,8 +1765,8 @@ const registerCommands = (
   pi.registerCommand("ds-cache", {
     description:
       "Show KV-cache hit/miss tokens and cost for the last DeepSeek request",
-    handler: (_args, context) => {
-      showCacheTelemetry(pi, context, services);
+    handler: async (_args, context) => {
+      await showCacheTelemetry(pi, context, services);
     },
   });
 
@@ -1804,6 +1806,9 @@ const registerRenderers = (pi: ExtensionAPI): void => {
   }>(THREADS_ENTRY, (entry, _options, theme) => {
     const { data } = entry;
     const box = createEntryBox(theme);
+    if (!data) {
+      return box;
+    }
     box.addChild(
       new Text(theme.fg("accent", "[ds] ") + theme.fg("dim", data.prompt), 0, 0)
     );
@@ -1814,9 +1819,7 @@ const registerRenderers = (pi: ExtensionAPI): void => {
         new Text(
           theme.fg(
             "muted",
-            `cache ${(data.usage.cacheRead / 1000).toFixed(1)}K hit / ${(data.usage.input / 1000).toFixed(1)}K miss · $${data.usage.cost.total.toFixed(4)}`,
-            0,
-            0
+            `cache ${(data.usage.cacheRead / 1000).toFixed(1)}K hit / ${(data.usage.input / 1000).toFixed(1)}K miss · $${data.usage.cost.total.toFixed(4)}`
           ),
           0,
           0
@@ -1831,8 +1834,12 @@ const registerRenderers = (pi: ExtensionAPI): void => {
     history: UsageRecord[];
     ts: number;
   }>(CACHE_CARD_ENTRY, (entry, _options, theme) => {
-    const { usage, history } = entry.data;
+    const { data } = entry;
     const box = createEntryBox(theme);
+    if (!data) {
+      return box;
+    }
+    const { usage, history } = data;
     box.addChild(
       new Text(
         `${theme.fg("accent", "[ds-cache]")} ${(usage.hitRate * 100).toFixed(1)}% hit rate`,

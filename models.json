@@ -1,36 +1,41 @@
 {
   "providers": {
     "deepseek-responses": {
-      "name"   : "DeepSeek (Responses API)",
+      "name": "DeepSeek (Responses API)",
       "baseUrl": "https://api.deepseek.com",
-      "api"    : "openai-responses",
-      "apiKey" : "${DEEPSEEK_API_KEY}",
-      "compat" : {
-        "supportsDeveloperRole"     : true,
-        "supportsReasoningEffort"   : true,
+      "api": "openai-responses",
+      "apiKey": "${DEEPSEEK_API_KEY}",
+      "compat": {
+        "supportsDeveloperRole": true,
+        "supportsReasoningEffort": true,
         "supportsLongCacheRetention": false,
-        "supportsStrictMode"        : false,
+        "supportsStrictMode": false,
         "supportsOpenAIGrammarTools": false,
-        "supportsToolSearch"        : false
+        "supportsToolSearch": false
       },
-      "models" : [
+      "models": [
         {
-          "id"              : "deepseek-v4-flash",
-          "name"            : "DeepSeek V4 Flash (Responses API)",
-          "reasoning"       : true,
+          "id": "deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash (Responses API)",
+          "reasoning": true,
           "thinkingLevelMap": {
-            "off"    : "none",
+            "off": "none",
             "minimal": "low",
-            "low"    : "low",
-            "medium" : "high",
-            "high"   : "high",
-            "xhigh"  : "xhigh",
-            "max"    : "max"
+            "low": "low",
+            "medium": "high",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
           },
-          "input"           : ["text"],
-          "cost"            : {"input": 0.14, "output": 0.28, "cacheRead": 0.0028, "cacheWrite": 0},
-          "contextWindow"   : 1000000,
-          "maxTokens"       : 393216
+          "input": ["text"],
+          "cost": {
+            "input": 0.14,
+            "output": 0.28,
+            "cacheRead": 0.0028,
+            "cacheWrite": 0
+          },
+          "contextWindow": 1000000,
+          "maxTokens": 393216
         }
       ]
     }
