@@ -2016,7 +2016,14 @@ const registerRenderers = (pi: ExtensionAPI): void => {
 
 export { resolveTimeoutMs, toStrictSchema };
 
-export const __test = { createThreadStore };
+export const __test = {
+  applyDefaultReasoningEffort,
+  createHttpClient,
+  createTelemetryStore,
+  createThreadStore,
+  extractResponsesText,
+  stripUnsupportedThinkingParameters,
+};
 
 export default (pi: ExtensionAPI): void => {
   const runtimeState = createRuntimeState();
