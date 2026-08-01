@@ -48,7 +48,11 @@ const DEFAULT_EFFORT = "high";
 const FOOTER_KEY = "ds-cache";
 const THREADS_ENTRY = "ds-reply";
 const CACHE_CARD_ENTRY = "ds-cache-card";
+const BALANCE_ENTRY = "ds-balance-card";
+const USAGE_ENTRY = "ds-usage";
 const MENU_STATUS_KEY = "deepseek-menu";
+const BALANCE_URL = "/user/balance";
+const BALANCE_TTL_MS = 60_000;
 const MAX_OUTPUT_TOKENS = 393_216;
 const USAGE_HISTORY_LIMIT = 100;
 const TOKENS_PER_MILLION = 1_000_000;
@@ -82,6 +86,7 @@ type DeepSeekMenuAction =
   | "chat"
   | "reset"
   | "cache"
+  | "balance"
   | "close";
 type DeepSeekResetAction = { kind: "all" } | { kind: "thread"; name: string };
 
@@ -123,6 +128,68 @@ interface UsageRecord {
 }
 
 type PendingUsageRecord = Omit<UsageRecord, "hitRate" | "ts">;
+
+interface BalanceInfo {
+  currency: string;
+  grantedBalance: number;
+  toppedUpBalance: number;
+  totalBalance: number;
+}
+
+interface BalanceState {
+  currency: string;
+  fetchedAt: number;
+  grantedBalance: number;
+  isAvailable: boolean;
+  toppedUpBalance: number;
+  totalBalance: number;
+}
+
+interface UsageSummary {
+  cacheRead: number;
+  calls: number;
+  costTotal: number;
+  input: number;
+  output: number;
+}
+
+const parseAmount = (value: unknown): number => {
+  const parsed = typeof value === "string" ? Number(value) : value;
+  return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : 0;
+};
+
+// Balance amounts arrive as strings ("24.62"); parse defensively and prefer
+// the USD entry when an account carries multiple currencies.
+const parseBalance = (raw: unknown): Omit<BalanceState, "fetchedAt"> => {
+  const body = isJsonObject(raw) ? raw : {};
+  const entries: BalanceInfo[] = getArray(body, "balance_infos")
+    .filter(isJsonObject)
+    .map((info) => ({
+      currency: getString(info, "currency") ?? "USD",
+      grantedBalance: parseAmount(info.granted_balance),
+      toppedUpBalance: parseAmount(info.topped_up_balance),
+      totalBalance: parseAmount(info.total_balance),
+    }));
+  const preferred =
+    entries.find((entry) => entry.currency === "USD") ?? entries[0];
+  return {
+    currency: preferred?.currency ?? "USD",
+    grantedBalance: preferred?.grantedBalance ?? 0,
+    isAvailable: body.is_available !== false,
+    toppedUpBalance: preferred?.toppedUpBalance ?? 0,
+    totalBalance: preferred?.totalBalance ?? 0,
+  };
+};
+
+const currencySymbol = (currency: string): string => {
+  if (currency === "USD") {
+    return "$";
+  }
+  if (currency === "CNY") {
+    return "¥";
+  }
+  return `${currency} `;
+};
 
 interface ResponsesResult {
   calls: JsonObject[];
@@ -226,6 +293,11 @@ const createAuthService = (): AuthService => {
 };
 
 interface HttpClient {
+  getJson: (
+    path: string,
+    signal?: AbortSignal,
+    baseUrl?: string
+  ) => Promise<unknown>;
   postJson: (
     path: string,
     body: unknown,
@@ -238,6 +310,48 @@ const getErrorName = (error: unknown): string | undefined =>
   error instanceof Error ? error.name : undefined;
 
 const createHttpClient = (auth: AuthService): HttpClient => {
+  const getJson = async (
+    path: string,
+    signal?: AbortSignal,
+    baseUrl = BASE_URL
+  ): Promise<unknown> => {
+    const key = await auth.resolveApiKey();
+    const timeoutSignal = AbortSignal.timeout(resolveTimeoutMs(undefined));
+    const requestSignal = signal
+      ? AbortSignal.any([signal, timeoutSignal])
+      : timeoutSignal;
+
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${key}`,
+        },
+        method: "GET",
+        signal: requestSignal,
+      });
+    } catch (error) {
+      if (signal?.aborted) {
+        throw new Error("Aborted by user", { cause: error });
+      }
+      const errorName = getErrorName(error);
+      if (errorName === "TimeoutError" || errorName === "AbortError") {
+        throw new Error("DeepSeek request timed out", { cause: error });
+      }
+      throw error;
+    }
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(
+        `DeepSeek API ${response.status}: ${detail.slice(0, 400)}`
+      );
+    }
+
+    return await response.json();
+  };
+
   const postJson = async (
     path: string,
     body: unknown,
@@ -282,7 +396,7 @@ const createHttpClient = (auth: AuthService): HttpClient => {
     return await response.json();
   };
 
-  return { postJson };
+  return { getJson, postJson };
 };
 
 // ---------------------------------------------------------------------------
@@ -463,6 +577,7 @@ interface TelemetryStore {
   mapChatUsage: (usage: unknown, source: string) => PendingUsageRecord;
   mapResponsesUsage: (usage: unknown, source: string) => PendingUsageRecord;
   record: (record: PendingUsageRecord) => UsageRecord;
+  restore: (records: UsageRecord[]) => void;
   setFooter: (context?: ExtensionContext) => void;
 }
 
@@ -503,6 +618,19 @@ const createTelemetryStore = (
       usageHistory.shift();
     }
     return fullRecord;
+  };
+
+  const restore = (records: UsageRecord[]): void => {
+    const byTimestamp = new Map<number, UsageRecord>();
+    for (const usageRecord of [...usageHistory, ...records]) {
+      byTimestamp.set(usageRecord.ts, usageRecord);
+    }
+    const merged = [...byTimestamp.values()].sort((a, b) => a.ts - b.ts);
+    usageHistory.length = 0;
+    usageHistory.push(...merged.slice(-USAGE_HISTORY_LIMIT));
+    if (!lastUsage) {
+      lastUsage = usageHistory.at(-1) ?? null;
+    }
   };
 
   const mapResponsesUsage = (
@@ -582,8 +710,82 @@ const createTelemetryStore = (
     mapChatUsage,
     mapResponsesUsage,
     record,
+    restore,
     setFooter,
   };
+};
+
+// ---------------------------------------------------------------------------
+// Balance store + usage ledger helpers
+// ---------------------------------------------------------------------------
+
+interface BalanceStore {
+  get: () => Promise<BalanceState>;
+  peek: () => BalanceState | null;
+}
+
+// Lazy-refreshing cache: balance changes slowly and the endpoint is a network
+// round trip, so serve a fresh value for BALANCE_TTL_MS and keep the stale
+// value on fetch failure (the caller decides how to surface it).
+const createBalanceStore = (
+  http: HttpClient,
+  ttlMs = BALANCE_TTL_MS
+): BalanceStore => {
+  let cached: BalanceState | null = null;
+
+  const get = async (): Promise<BalanceState> => {
+    if (cached && Date.now() - cached.fetchedAt < ttlMs) {
+      return cached;
+    }
+    const balance = {
+      ...parseBalance(await http.getJson(BALANCE_URL)),
+      fetchedAt: Date.now(),
+    };
+    cached = balance;
+    return balance;
+  };
+
+  const peek = (): BalanceState | null => cached;
+
+  return { get, peek };
+};
+
+const summarizeUsage = (
+  records: UsageRecord[],
+  sinceTs?: number
+): UsageSummary => {
+  const included =
+    sinceTs === undefined ? records : records.filter((r) => r.ts >= sinceTs);
+  return {
+    cacheRead: included.reduce((sum, record) => sum + record.cacheRead, 0),
+    calls: included.length,
+    costTotal: included.reduce((sum, record) => sum + record.cost.total, 0),
+    input: included.reduce((sum, record) => sum + record.input, 0),
+    output: included.reduce((sum, record) => sum + record.output, 0),
+  };
+};
+
+const isUsageRecord = (value: unknown): value is UsageRecord =>
+  isJsonObject(value) &&
+  typeof value.ts === "number" &&
+  typeof value.input === "number" &&
+  typeof value.output === "number" &&
+  isJsonObject(value.cost) &&
+  typeof value.cost.total === "number";
+
+const collectUsageRecords = (
+  branch: readonly SessionEntry[]
+): UsageRecord[] => {
+  const records: UsageRecord[] = [];
+  for (const entry of branch) {
+    if (entry.type !== "custom" || entry.customType !== USAGE_ENTRY) {
+      continue;
+    }
+    if (isUsageRecord(entry.data)) {
+      records.push(entry.data);
+    }
+  }
+  return records;
 };
 
 // ---------------------------------------------------------------------------
@@ -1056,6 +1258,7 @@ const CallFunctionParams = Type.Object({
 // ---------------------------------------------------------------------------
 
 interface ToolServices {
+  balance: BalanceStore;
   beta: BetaApi;
   responses: ResponsesApi;
   runtimeState: DeepSeekRuntimeState;
@@ -1123,7 +1326,7 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
         thread.items = [...inputItems, ...result.items];
         thread.round += 1;
         const usage = telemetry.mapResponsesUsage(result.usage, "chat");
-        telemetry.record(usage);
+        pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
         telemetry.setFooter(context);
 
         const reply =
@@ -1218,7 +1421,7 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
       const message = getObject(getFirstChoice(response), "message");
       const completion = getString(message, "content") ?? "";
       const usage = telemetry.mapChatUsage(response.usage, "prefix");
-      telemetry.record(usage);
+      pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
       telemetry.setFooter(context);
       const rawUsage = isJsonObject(response.usage)
         ? response.usage
@@ -1277,7 +1480,7 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
       );
       const completion = getString(getFirstChoice(response), "text") ?? "";
       const usage = telemetry.mapChatUsage(response.usage, "fim");
-      telemetry.record(usage);
+      pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
       telemetry.setFooter(context);
       const rawUsage = isJsonObject(response.usage)
         ? response.usage
@@ -1327,7 +1530,7 @@ const registerResponsesTools = (
         signal ?? context.signal
       );
       const usage = telemetry.mapResponsesUsage(result.usage, "search");
-      telemetry.record(usage);
+      pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
       telemetry.setFooter(context);
       return {
         content: [
@@ -1403,7 +1606,7 @@ const registerFunctionTool = (
       const toolCall = isJsonObject(rawToolCall) ? rawToolCall : undefined;
       const calledFunction = getObject(toolCall, "function");
       const usage = telemetry.mapChatUsage(response.usage, "function");
-      telemetry.record(usage);
+      pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
       telemetry.setFooter(context);
 
       if (!toolCall) {
@@ -1566,17 +1769,20 @@ const registerLifecycleHandlers = (
       return;
     }
     const { usage } = message;
-    telemetry.record({
-      cacheRead: usage.cacheRead,
-      cacheWrite: usage.cacheWrite,
-      cost: usage.cost,
-      input: usage.input,
-      model: message.model ?? MODEL_ID,
-      output: usage.output,
-      reasoning: usage.reasoning,
-      source: "agent",
-      totalTokens: usage.totalTokens,
-    });
+    pi.appendEntry(
+      USAGE_ENTRY,
+      telemetry.record({
+        cacheRead: usage.cacheRead,
+        cacheWrite: usage.cacheWrite,
+        cost: usage.cost,
+        input: usage.input,
+        model: message.model ?? MODEL_ID,
+        output: usage.output,
+        reasoning: usage.reasoning,
+        source: "agent",
+        totalTokens: usage.totalTokens,
+      })
+    );
     telemetry.setFooter(context);
   });
 
@@ -1585,9 +1791,11 @@ const registerLifecycleHandlers = (
   });
   pi.on("session_start", (_event, context) => {
     threads.restore(context);
+    telemetry.restore(collectUsageRecords(context.sessionManager.getBranch()));
   });
   pi.on("session_tree", (_event, context) => {
     threads.restore(context);
+    telemetry.restore(collectUsageRecords(context.sessionManager.getBranch()));
   });
 };
 
@@ -1596,6 +1804,7 @@ const registerLifecycleHandlers = (
 // ---------------------------------------------------------------------------
 
 interface CommandServices {
+  balance: BalanceStore;
   responses: ResponsesApi;
   runtimeState: DeepSeekRuntimeState;
   telemetry: TelemetryStore;
@@ -1636,6 +1845,7 @@ const runOneShotChat = async (
     const usage = telemetry.record(
       telemetry.mapResponsesUsage(result.usage, "command")
     );
+    pi.appendEntry(USAGE_ENTRY, usage);
     telemetry.setFooter(context);
     pi.appendEntry(THREADS_ENTRY, {
       prompt,
@@ -1675,6 +1885,55 @@ const showCacheTelemetry = (
   telemetry.setFooter(context);
 };
 
+const showBalance = async (
+  pi: ExtensionAPI,
+  context: ExtensionContext,
+  services: CommandServices
+): Promise<void> => {
+  const { balance, runtimeState, telemetry } = services;
+  if (!requireDeepSeekEnabled(runtimeState, context)) {
+    return;
+  }
+  let balanceState: BalanceState;
+  try {
+    balanceState = await balance.get();
+  } catch (error) {
+    const stale = balance.peek();
+    if (stale) {
+      context.ui.notify(
+        `ds-balance: refresh failed (${getErrorMessage(error)}); showing cached value.`,
+        "warning"
+      );
+      balanceState = stale;
+    } else {
+      context.ui.notify(
+        `ds-balance: balance query failed (${getErrorMessage(error)})`,
+        "error"
+      );
+      return;
+    }
+  }
+  const history = telemetry.getHistory();
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const today = summarizeUsage(history, startOfToday.getTime());
+  const session = summarizeUsage(history);
+  pi.appendEntry(BALANCE_ENTRY, {
+    ...balanceState,
+    sessionCalls: session.calls,
+    sessionCostTotal: session.costTotal,
+    todayCalls: today.calls,
+    todayCostTotal: today.costTotal,
+    ts: Date.now(),
+  });
+  if (!balanceState.isAvailable) {
+    context.ui.notify(
+      "DeepSeek balance is insufficient: API calls fail until the account is topped up.",
+      "warning"
+    );
+  }
+};
+
 const getDeepSeekMenuOptions = (
   runtimeState: DeepSeekRuntimeState
 ): DeepSeekMenuOption[] => [
@@ -1688,6 +1947,7 @@ const getDeepSeekMenuOptions = (
   },
   { action: "chat", label: "One-shot chat (/ds)" },
   { action: "reset", label: "Reset chat threads" },
+  { action: "balance", label: "Show remaining balance (/ds-balance)" },
   { action: "cache", label: "Show cache telemetry (/ds-cache)" },
   { action: "close", label: "Close" },
 ];
@@ -1788,6 +2048,7 @@ const resetThreadsFromMenu = async (
 };
 
 const MENU_STATUS: Record<DeepSeekMenuAction, string> = {
+  balance: "DeepSeek: loading account balance...",
   cache: "DeepSeek: loading cache telemetry...",
   chat: "DeepSeek: one-shot chat...",
   close: "DeepSeek",
@@ -1836,6 +2097,9 @@ const runMenuAction = async (
       case "reset":
         await resetThreadsFromMenu(context, services);
         break;
+      case "balance":
+        await showBalance(pi, context, services);
+        break;
       case "cache":
         showCacheTelemetry(pi, context, services);
         break;
@@ -1880,6 +2144,21 @@ const registerCommands = (
       "Show KV-cache hit/miss tokens and cost for the last DeepSeek request",
     handler: async (_args, context) => {
       await showCacheTelemetry(pi, context, services);
+    },
+  });
+
+  pi.registerCommand("ds-balance", {
+    description:
+      "Show the remaining balance (credits left) on the DeepSeek account, plus usage today and this session",
+    handler: async (_args, context) => {
+      try {
+        await showBalance(pi, context, services);
+      } catch (error) {
+        context.ui.notify(
+          `ds-balance error: ${getErrorMessage(error)}`,
+          "error"
+        );
+      }
     },
   });
 
@@ -2008,6 +2287,72 @@ const registerRenderers = (pi: ExtensionAPI): void => {
     }
     return box;
   });
+
+  pi.registerEntryRenderer<{
+    currency: string;
+    fetchedAt: number;
+    grantedBalance: number;
+    isAvailable: boolean;
+    sessionCalls: number;
+    sessionCostTotal: number;
+    todayCalls: number;
+    todayCostTotal: number;
+    toppedUpBalance: number;
+    totalBalance: number;
+    ts: number;
+  }>(BALANCE_ENTRY, (entry, _options, theme) => {
+    const { data } = entry;
+    const box = createEntryBox(theme);
+    if (!data) {
+      return box;
+    }
+    const symbol = currencySymbol(data.currency);
+    const status = data.isAvailable
+      ? theme.fg("success", "available")
+      : theme.fg("error", "INSUFFICIENT BALANCE");
+    box.addChild(
+      new Text(
+        `${theme.fg("accent", "[ds-balance]")} ${status} · ${symbol}${data.totalBalance.toFixed(2)}`,
+        0,
+        0
+      )
+    );
+    if (data.grantedBalance > 0 || data.toppedUpBalance > 0) {
+      box.addChild(
+        new Text(
+          theme.fg(
+            "muted",
+            `granted ${symbol}${data.grantedBalance.toFixed(2)} · topped up ${symbol}${data.toppedUpBalance.toFixed(2)}`
+          ),
+          0,
+          0
+        )
+      );
+    }
+    if (data.sessionCalls > 0) {
+      box.addChild(
+        new Text(
+          theme.fg(
+            "muted",
+            `usage today ${data.todayCalls} calls · $${data.todayCostTotal.toFixed(4)} · session ${data.sessionCalls} calls · $${data.sessionCostTotal.toFixed(4)} (est.)`
+          ),
+          0,
+          0
+        )
+      );
+    }
+    box.addChild(
+      new Text(
+        theme.fg(
+          "muted",
+          `updated ${new Date(data.fetchedAt).toLocaleTimeString()}`
+        ),
+        0,
+        0
+      )
+    );
+    return box;
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -2018,11 +2363,15 @@ export { resolveTimeoutMs, toStrictSchema };
 
 export const __test = {
   applyDefaultReasoningEffort,
+  collectUsageRecords,
+  createBalanceStore,
   createHttpClient,
   createTelemetryStore,
   createThreadStore,
   extractResponsesText,
+  parseBalance,
   stripUnsupportedThinkingParameters,
+  summarizeUsage,
 };
 
 export default (pi: ExtensionAPI): void => {
@@ -2033,7 +2382,9 @@ export default (pi: ExtensionAPI): void => {
   const beta = createBetaApi(http);
   const telemetry = createTelemetryStore(runtimeState);
   const threads = createThreadStore();
+  const balance = createBalanceStore(http);
   const services: ToolServices = {
+    balance,
     beta,
     responses,
     runtimeState,
