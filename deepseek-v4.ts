@@ -694,20 +694,138 @@ const rewriteLocalRef = (reference: string): string => {
   return `#/${rewritten.join("/")}`;
 };
 
-const resolveLocalRef = (schema: JsonObject, reference: string): unknown => {
+// Refs are normalized to `#/$def/<Name>` pointers. Bare names and the
+// pointer forms `#/$defs/<Name>` and `#/$def/<Name>` all resolve against the
+// definition registry; anything else keeps the legacy `$defs` -> `$def`
+// pointer rewrite.
+
+const refName = (reference: string): string | undefined => {
+  if (reference.startsWith("#/$defs/") || reference.startsWith("#/$def/")) {
+    return reference
+      .slice(reference.lastIndexOf("/") + 1)
+      .replaceAll("~1", "/")
+      .replaceAll("~0", "~");
+  }
   if (!reference.startsWith("#/")) {
-    return;
+    return reference;
   }
-  let value: unknown = schema;
-  for (const encodedSegment of reference.slice(2).split("/")) {
-    const segment = encodedSegment.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (!isJsonObject(value)) {
-      return;
-    }
-    value = value[segment];
-  }
-  return value;
 };
+
+const emitRef = (name: string): string =>
+  `#/$def/${name.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+
+type DefinitionRegistry = Map<string, JsonObject>;
+
+/**
+ * Collect source definitions from a node's `$defs`/`$def` into the registry.
+ * The first definition of a name wins; later duplicates are ignored so that
+ * resolution stays deterministic across mutually-referencing definitions.
+ */
+const collectDefinitions = (
+  source: JsonObject,
+  registry: DefinitionRegistry
+): void => {
+  for (const definitionsSource of [source.$defs, source.$def]) {
+    if (definitionsSource === undefined) {
+      continue;
+    }
+    if (!isJsonObject(definitionsSource)) {
+      throw new Error("Strict schema definitions must be an object");
+    }
+    for (const [name, definition] of Object.entries(definitionsSource)) {
+      if (isJsonObject(definition) && !registry.has(name)) {
+        registry.set(name, definition);
+      }
+    }
+  }
+};
+
+const convertNode = (
+  schema: unknown,
+  registry: DefinitionRegistry
+): unknown => {
+  if (!isJsonObject(schema)) {
+    return Array.isArray(schema)
+      ? schema.map((item) => convertNode(item, registry))
+      : schema;
+  }
+
+  const strictSchema: JsonObject = {};
+  if (typeof schema.description === "string") {
+    strictSchema.description = schema.description;
+  }
+  if (typeof schema.$ref === "string") {
+    const name = refName(schema.$ref);
+    strictSchema.$ref =
+      name === undefined ? rewriteLocalRef(schema.$ref) : emitRef(name);
+  }
+
+  normalizeSchemaType(schema, strictSchema, registry);
+
+  if (typeof schema.const === "string" || typeof schema.const === "boolean") {
+    strictSchema.enum = [schema.const];
+  } else if (typeof schema.const === "number") {
+    strictSchema.const = schema.const;
+  }
+  if (Array.isArray(schema.enum)) {
+    strictSchema.enum = schema.enum;
+  }
+  if (Array.isArray(schema.anyOf)) {
+    strictSchema.anyOf = schema.anyOf.map((branch) =>
+      convertNode(branch, registry)
+    );
+  }
+
+  collectDefinitions(schema, registry);
+
+  return strictSchema;
+};
+
+/** Convert TypeBox or JSON Schema input to DeepSeek's strict-mode dialect. */
+function toStrictSchema(schema: unknown, root = true): unknown {
+  if (!isJsonObject(schema)) {
+    return Array.isArray(schema)
+      ? schema.map((item) => toStrictSchema(item, false))
+      : schema;
+  }
+
+  // Definitions are collected from every visited node (first definition of a
+  // name wins) and hoisted to the root `$def`. Refs are rewritten to
+  // normalized `#/$def/<Name>` pointers, never followed, so recursive
+  // schemas terminate naturally.
+  const registry: DefinitionRegistry = new Map();
+  const strictSchema = convertNode(schema, registry) as JsonObject;
+
+  const definitions: JsonObject = {};
+  for (const [name, definition] of registry) {
+    definitions[name] = convertNode(definition, registry);
+  }
+
+  if (root && typeof strictSchema.$ref === "string") {
+    const name = refName(strictSchema.$ref);
+    const target = name === undefined ? undefined : registry.get(name);
+    if (!isJsonObject(target)) {
+      throw new Error(
+        `Strict schema root reference cannot be resolved: ${strictSchema.$ref}`
+      );
+    }
+    if (target.type !== "object") {
+      throw new Error(
+        "Strict function parameters must resolve to an object schema"
+      );
+    }
+    const resolved = convertNode(target, registry) as JsonObject;
+    if (Object.keys(definitions).length > 0) {
+      resolved.$def = definitions;
+    }
+    return resolved;
+  }
+
+  if (Object.keys(definitions).length > 0) {
+    strictSchema.$def = definitions;
+  }
+  return strictSchema;
+}
 
 const copyNumericSchemaFields = (
   source: JsonObject,
@@ -729,7 +847,11 @@ const copyNumericSchemaFields = (
   }
 };
 
-const normalizeSchemaType = (source: JsonObject, target: JsonObject): void => {
+const normalizeSchemaType = (
+  source: JsonObject,
+  target: JsonObject,
+  registry: DefinitionRegistry
+): void => {
   switch (source.type) {
     case "object": {
       const properties = isJsonObject(source.properties)
@@ -737,7 +859,7 @@ const normalizeSchemaType = (source: JsonObject, target: JsonObject): void => {
         : {};
       const strictProperties: JsonObject = {};
       for (const [key, property] of Object.entries(properties)) {
-        strictProperties[key] = toStrictSchema(property, false);
+        strictProperties[key] = convertNode(property, registry);
       }
       target.type = "object";
       target.properties = strictProperties;
@@ -765,7 +887,7 @@ const normalizeSchemaType = (source: JsonObject, target: JsonObject): void => {
     case "array":
       target.type = "array";
       if (source.items !== undefined) {
-        target.items = toStrictSchema(source.items, false);
+        target.items = convertNode(source.items, registry);
       }
       break;
     case "boolean":
@@ -775,77 +897,6 @@ const normalizeSchemaType = (source: JsonObject, target: JsonObject): void => {
       break;
   }
 };
-
-const normalizeDefinitions = (source: JsonObject): JsonObject => {
-  const definitions: JsonObject = {};
-  for (const definitionsSource of [source.$defs, source.$def]) {
-    if (definitionsSource === undefined) {
-      continue;
-    }
-    if (!isJsonObject(definitionsSource)) {
-      throw new Error("Strict schema definitions must be an object");
-    }
-    for (const [name, definition] of Object.entries(definitionsSource)) {
-      definitions[name] = toStrictSchema(definition, false);
-    }
-  }
-  return definitions;
-};
-
-/** Convert TypeBox or JSON Schema input to DeepSeek's strict-mode dialect. */
-function toStrictSchema(schema: unknown, root = true): unknown {
-  if (!isJsonObject(schema)) {
-    return Array.isArray(schema)
-      ? schema.map((item) => toStrictSchema(item, false))
-      : schema;
-  }
-
-  const strictSchema: JsonObject = {};
-  if (typeof schema.description === "string") {
-    strictSchema.description = schema.description;
-  }
-  if (typeof schema.$ref === "string") {
-    strictSchema.$ref = rewriteLocalRef(schema.$ref);
-  }
-
-  normalizeSchemaType(schema, strictSchema);
-
-  if (typeof schema.const === "string" || typeof schema.const === "boolean") {
-    strictSchema.enum = [schema.const];
-  } else if (typeof schema.const === "number") {
-    strictSchema.const = schema.const;
-  }
-  if (Array.isArray(schema.enum)) {
-    strictSchema.enum = schema.enum;
-  }
-  if (Array.isArray(schema.anyOf)) {
-    strictSchema.anyOf = schema.anyOf.map((branch) =>
-      toStrictSchema(branch, false)
-    );
-  }
-
-  const definitions = normalizeDefinitions(schema);
-  if (Object.keys(definitions).length > 0) {
-    strictSchema.$def = definitions;
-  }
-
-  if (root && typeof strictSchema.$ref === "string") {
-    const target = resolveLocalRef(strictSchema, strictSchema.$ref);
-    if (!isJsonObject(target)) {
-      throw new Error(
-        `Strict schema root reference cannot be resolved: ${strictSchema.$ref}`
-      );
-    }
-    if (target.type !== "object") {
-      throw new Error(
-        "Strict function parameters must resolve to an object schema"
-      );
-    }
-    return { ...target, $def: strictSchema.$def };
-  }
-
-  return strictSchema;
-}
 
 // ---------------------------------------------------------------------------
 // Tool parameter schemas
@@ -1900,6 +1951,8 @@ const registerRenderers = (pi: ExtensionAPI): void => {
 // ---------------------------------------------------------------------------
 // Thin default composition
 // ---------------------------------------------------------------------------
+
+export { toStrictSchema };
 
 export default (pi: ExtensionAPI): void => {
   const runtimeState = createRuntimeState();
