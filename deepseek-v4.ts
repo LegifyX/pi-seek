@@ -11,6 +11,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
   getAgentDir,
+  type SessionEntry,
   type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
@@ -658,48 +659,63 @@ const createThreadStore = (): ThreadStore => {
   const snapshot = (): Record<string, Thread> =>
     Object.fromEntries(threads.entries());
 
+  const applyLegacySnapshot = (snapshotMap: Record<string, Thread>): void => {
+    threads.clear();
+    for (const [name, thread] of Object.entries(snapshotMap)) {
+      threads.set(name, thread);
+    }
+  };
+
+  const applyReset = (
+    resetAction: { kind: "all" } | { kind: "thread"; name: string }
+  ): void => {
+    if (resetAction.kind === "all") {
+      threads.clear();
+      return;
+    }
+    threads.delete(resetAction.name);
+  };
+
+  const applyEntry = (entry: SessionEntry): void => {
+    if (entry.type !== "message") {
+      return;
+    }
+    const { message } = entry;
+    if (message.role !== "toolResult") {
+      return;
+    }
+    if (
+      message.toolName !== "ds_chat" &&
+      message.toolName !== "ds_chat_reset"
+    ) {
+      return;
+    }
+    const details = message.details as
+      | {
+          reset?: { kind: "all" } | { kind: "thread"; name: string };
+          thread?: Thread & { name: string };
+          threads?: Record<string, Thread>;
+        }
+      | undefined;
+    if (details?.threads) {
+      // Legacy shape from versions that snapshotted the whole map.
+      applyLegacySnapshot(details.threads);
+      return;
+    }
+    if (message.toolName === "ds_chat" && details?.thread?.name) {
+      const { items, name, round, system } = details.thread;
+      threads.set(name, { items, round, system });
+      return;
+    }
+    if (message.toolName === "ds_chat_reset" && details?.reset) {
+      applyReset(details.reset);
+    }
+  };
+
   const restore = (context: ExtensionContext): void => {
     threads.clear();
     for (const entry of context.sessionManager.getBranch()) {
-      if (entry.type !== "message") {
-        continue;
-      }
-      const { message } = entry;
-      const isThreadTool =
-        message.role === "toolResult" &&
-        (message.toolName === "ds_chat" ||
-          message.toolName === "ds_chat_reset");
-      if (!isThreadTool) {
-        continue;
-      }
-      const details = message.details as
-        | {
-            reset?: { kind: "all" } | { kind: "thread"; name: string };
-            thread?: Thread & { name: string };
-            threads?: Record<string, Thread>;
-          }
-        | undefined;
-      if (details?.threads) {
-        // Legacy shape from versions that snapshotted the whole map.
-        threads.clear();
-        for (const [name, thread] of Object.entries(details.threads)) {
-          threads.set(name, thread);
-        }
-        continue;
-      }
-      if (message.toolName === "ds_chat" && details?.thread?.name) {
-        const { items, name, round, system } = details.thread;
-        threads.set(name, { items, round, system });
-      } else if (
-        message.toolName === "ds_chat_reset" &&
-        details?.reset
-      ) {
-        if (details.reset.kind === "all") {
-          threads.clear();
-        } else {
-          threads.delete(details.reset.name);
-        }
-      }
+      applyEntry(entry);
     }
   };
 

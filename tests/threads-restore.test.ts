@@ -3,26 +3,23 @@ import { test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { __test } from "../deepseek-v4.ts";
 
-type BranchEntry = {
-  type: "message";
+interface BranchEntry {
   message: {
     role: "toolResult";
     toolName: string;
     details: unknown;
   };
-};
+  type: "message";
+}
 
-type ThreadLike = {
+interface ThreadLike {
   items: unknown[];
   round: number;
   system?: string;
-};
+}
 
 const chat = (name: string, round: number, itemCount: number): BranchEntry => ({
-  type: "message",
   message: {
-    role: "toolResult",
-    toolName: "ds_chat",
     details: {
       thread: {
         items: Array.from({ length: itemCount }, (_, i) => `${name}#${i}`),
@@ -30,28 +27,31 @@ const chat = (name: string, round: number, itemCount: number): BranchEntry => ({
         round,
       },
     },
+    role: "toolResult",
+    toolName: "ds_chat",
   },
+  type: "message",
 });
 
 const reset = (name?: string): BranchEntry => ({
-  type: "message",
   message: {
-    role: "toolResult",
-    toolName: "ds_chat_reset",
     details: {
       reset: name ? { kind: "thread", name } : { kind: "all" },
       thread: name,
     },
+    role: "toolResult",
+    toolName: "ds_chat_reset",
   },
+  type: "message",
 });
 
 const legacy = (threads: Record<string, ThreadLike>): BranchEntry => ({
-  type: "message",
   message: {
+    details: { threads },
     role: "toolResult",
     toolName: "ds_chat",
-    details: { threads },
   },
+  type: "message",
 });
 
 const normalize = (thread: ThreadLike): ThreadLike => {
