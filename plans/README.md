@@ -23,7 +23,7 @@ be required at runtime. Consequences enforced by every plan:
 |------|-------|----------|--------|------------|--------|
 | 001  | Establish a passing verification baseline (format, typecheck, tests) | P1 | S | — | DONE |
 | 002  | Fix `toStrictSchema` `$ref`/`$def` resolution | P1 | M | 001 | DONE |
-| 003  | Scale request timeout with `max_output_tokens` | P1 | S | 001 | TODO |
+| 003  | Scale request timeout with `max_output_tokens` | P1 | S | 001 | DONE |
 | 004  | Stop embedding full thread snapshots in tool results | P2 | S | 001 | TODO |
 | 005  | Align models.json with code + README (xhigh, contextWindow, compat) | P2 | S | 001 | TODO |
 | 006  | Characterization tests for telemetry, threads, parsing, payload transforms | P2 | M | 001, 002 | TODO |

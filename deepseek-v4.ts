@@ -26,6 +26,23 @@ const BASE_URL = "https://api.deepseek.com";
 const BETA_URL = "https://api.deepseek.com/beta";
 const API_KEY_ENV = "DEEPSEEK_API_KEY";
 const REQUEST_TIMEOUT_MS = 90_000;
+const TIMEOUT_MS_PER_TOKEN = 1; // 1ms per requested output token beyond the base
+const TIMEOUT_ENV = "DEEPSEEK_REQUEST_TIMEOUT_MS"; // seconds; absolute override
+
+const resolveTimeoutMs = (body: unknown): number => {
+  const envValue = Number(process.env[TIMEOUT_ENV]);
+  if (Number.isFinite(envValue) && envValue > 0) {
+    return envValue * 1000;
+  }
+  const maxOutputTokens = isJsonObject(body)
+    ? getNumber(body, "max_output_tokens")
+    : undefined;
+  const tokens = maxOutputTokens ?? 0;
+  return tokens > 0
+    ? REQUEST_TIMEOUT_MS + tokens * TIMEOUT_MS_PER_TOKEN
+    : REQUEST_TIMEOUT_MS;
+};
+
 const DEFAULT_EFFORT = "high";
 const FOOTER_KEY = "ds-cache";
 const THREADS_ENTRY = "ds-reply";
@@ -227,7 +244,7 @@ const createHttpClient = (auth: AuthService): HttpClient => {
     baseUrl = BASE_URL
   ): Promise<unknown> => {
     const key = await auth.resolveApiKey();
-    const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const timeoutSignal = AbortSignal.timeout(resolveTimeoutMs(body));
     const requestSignal = signal
       ? AbortSignal.any([signal, timeoutSignal])
       : timeoutSignal;
@@ -1148,6 +1165,7 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
       }
       if (params.max_tokens) {
         body.max_tokens = params.max_tokens;
+        body.max_output_tokens = params.max_tokens;
       }
 
       const response = await beta.postChatCompletion(
@@ -1204,6 +1222,7 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
       }
       if (params.max_tokens) {
         body.max_tokens = params.max_tokens;
+        body.max_output_tokens = params.max_tokens;
       }
       if (params.stop?.length) {
         body.stop = params.stop;
@@ -1952,7 +1971,7 @@ const registerRenderers = (pi: ExtensionAPI): void => {
 // Thin default composition
 // ---------------------------------------------------------------------------
 
-export { toStrictSchema };
+export { resolveTimeoutMs, toStrictSchema };
 
 export default (pi: ExtensionAPI): void => {
   const runtimeState = createRuntimeState();
