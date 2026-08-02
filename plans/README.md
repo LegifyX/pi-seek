@@ -17,6 +17,41 @@ be required at runtime. Consequences enforced by every plan:
 - Nothing may assume pi-chimera or any other extension exists.
 - Plan 007 verifies standalone operation explicitly.
 
+## Round 2 — direct execution of audit findings (2026-08-02, HEAD `18c2ee8`)
+
+No new plan files were written: the maintainer chose to execute the vetted
+findings directly through the orchestration flow (scout audit → implementation
+agents → integration review → commit). All table findings were executed and
+verified; the worktree gates (`npm run verify`) pass with 118 tests.
+
+| Finding | Fix landed | Notes |
+|---------|-----------|-------|
+| 1 — models.json `${VAR}` placeholder sent literally as Bearer token | DONE | `interpolateEnv` in auth fallback; README claim now true |
+| 2 — README "three commands" (missing `/ds-balance`) | DONE | Intro, table, standalone, pi-chimera, operator-verification |
+| 3 — stale README `deepseek-v4.ts:N` line refs | DONE | Re-anchored to final round-2 line numbers |
+| 4 — ds_chat persists/replays raw call items | DONE | `isPersistableItem` filter on thread persistence |
+| 5 — non-JSON 200 bodies throw raw SyntaxError | DONE | Mapped in getJson/postJson |
+| 6 — createAuthService untested | DONE | Injectable deps + `tests/auth.test.ts` (10 tests) |
+| 7 — request bodies untested; dual `max_tokens`+`max_output_tokens` | DONE | `build*Body` builders, `tests/body-builders.test.ts`; beta bodies now send only `max_tokens`; `resolveTimeoutMs` scales by either cap |
+| 8 — ds_call_function parse/error logic inlined | DONE | `extractRequiredFunctionCall` + `tests/function-call.test.ts` |
+| 9 — toStrictSchema dangling non-`$defs` refs; enum w/o type | DONE | Throws on unresolvable refs; type inferred from uniform enums; +13 tests |
+| 10 — models.json compat drift | DONE | `requiresReasoningContentOnAssistantMessages: true` added |
+| 11 — telemetry restore dedupes by ts alone | DONE | Composite key `ts|source|totalTokens` |
+| 12 — no CI / no verify script / brace-expansion vuln | DONE | `.github/workflows/ci.yml`, `verify` script, override → 0 vulns |
+
+Dependency note honored: finding 1's extraction preceded finding 6's tests;
+finding 7's builder extraction made the dual-param decision testable and
+exposed the beta timeout-scaling regression, fixed by extending
+`resolveTimeoutMs` to `max_tokens`.
+
+## Findings considered and rejected (round 2 additions)
+
+- reset(all) race missing a concurrently-created thread: real but vanishingly
+  narrow; not worth a plan.
+- Direction items (cost guardrails, context-overflow protection, operator-
+  verification script, streaming via `_onUpdate`, thread list/inspect):
+  presented as options, not selected; remain open.
+
 ## Execution order & status
 
 | Plan | Title | Priority | Effort | Depends on | Status |
