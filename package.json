@@ -12,6 +12,11 @@
     "check": "ultracite check",
     "fix": "ultracite fix",
     "test": "node --test \"tests/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "test:watch": "node --watch --test \"tests/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "verify": "ultracite check && tsc --noEmit && node --test \"tests/**/*.test.ts\""
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.8"
   }
 }
