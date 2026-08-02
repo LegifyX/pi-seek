@@ -125,3 +125,125 @@ test("root $ref to a non-object schema throws", () => {
     { message: "Strict function parameters must resolve to an object schema" }
   );
 });
+
+test("unresolvable non-root $ref throws instead of passing through", () => {
+  assert.throws(
+    () =>
+      toStrictSchema({
+        properties: { p: { $ref: "#/components/schemas/Foo" } },
+        type: "object",
+      }),
+    {
+      message:
+        "Strict schema reference cannot be resolved: #/components/schemas/Foo",
+    }
+  );
+});
+
+test("enum-only schemas infer a uniform string type", () => {
+  assert.deepEqual(toStrictSchema({ enum: ["a", "b"] }), {
+    enum: ["a", "b"],
+    type: "string",
+  });
+});
+
+test("string const maps to a single-value enum with inferred string type", () => {
+  assert.deepEqual(toStrictSchema({ const: "x" }), {
+    enum: ["x"],
+    type: "string",
+  });
+});
+
+test("enum-only schemas infer a uniform number type", () => {
+  assert.deepEqual(toStrictSchema({ enum: [1, 2] }), {
+    enum: [1, 2],
+    type: "number",
+  });
+});
+
+test("enum-only schemas infer a uniform boolean type", () => {
+  assert.deepEqual(toStrictSchema({ enum: [true] }), {
+    enum: [true],
+    type: "boolean",
+  });
+});
+
+test("mixed-kind enums leave type unset", () => {
+  assert.deepEqual(toStrictSchema({ enum: ["a", 1] }), { enum: ["a", 1] });
+});
+
+test("empty enums leave type unset", () => {
+  assert.deepEqual(toStrictSchema({ enum: [] }), { enum: [] });
+});
+
+test("explicit type wins over enum inference", () => {
+  assert.deepEqual(toStrictSchema({ enum: ["a"], type: "string" }), {
+    enum: ["a"],
+    type: "string",
+  });
+});
+
+test("root $ref through singular $def to a non-object schema throws", () => {
+  assert.throws(
+    () =>
+      toStrictSchema({ $def: { Foo: { type: "string" } }, $ref: "#/$def/Foo" }),
+    { message: "Strict function parameters must resolve to an object schema" }
+  );
+});
+
+test("singular $def key resolves property-level refs and hoists", () => {
+  assert.deepEqual(
+    toStrictSchema({
+      $def: { Foo: { type: "string" } },
+      properties: { p: { $ref: "#/$def/Foo" } },
+      type: "object",
+    }),
+    {
+      $def: { Foo: { type: "string" } },
+      additionalProperties: false,
+      properties: { p: { $ref: "#/$def/Foo" } },
+      required: ["p"],
+      type: "object",
+    }
+  );
+});
+
+test("anyOf branches resolve refs against the hoisted $def registry", () => {
+  assert.deepEqual(
+    toStrictSchema({
+      $defs: { Foo: { type: "number" } },
+      anyOf: [{ type: "string" }, { $ref: "#/$defs/Foo" }],
+    }),
+    {
+      $def: { Foo: { type: "number" } },
+      anyOf: [{ type: "string" }, { $ref: "#/$def/Foo" }],
+    }
+  );
+});
+
+test("array schemas keep converted items", () => {
+  assert.deepEqual(
+    toStrictSchema({ items: { type: "string" }, type: "array" }),
+    { items: { type: "string" }, type: "array" }
+  );
+});
+
+test("format filtering keeps allowed formats and drops unsupported ones", () => {
+  assert.deepEqual(
+    toStrictSchema(
+      Type.Object({
+        email: Type.String({ format: "email" }),
+        when: Type.String({ format: "date-time" }),
+      })
+    ),
+    {
+      additionalProperties: false,
+      properties: {
+        email: { format: "email", type: "string" },
+        when: { type: "string" },
+      },
+      required: ["email", "when"],
+      type: "object",
+    }
+  );
+});

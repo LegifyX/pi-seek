@@ -58,6 +58,34 @@ test("restore dedupes by timestamp, keeping the last occurrence", () => {
   assert.equal(history[0].input, 2);
 });
 
+test("restore keeps distinct records that share a timestamp", () => {
+  const store = makeStore();
+  store.restore([
+    makeRecord(100, { source: "a", totalTokens: 10 }),
+    makeRecord(100, { source: "b", totalTokens: 20 }),
+  ]);
+  const history = store.getHistory();
+  assert.equal(history.length, 2);
+  assert.deepEqual(
+    history.map((record) => record.totalTokens).sort((a, b) => a - b),
+    [10, 20]
+  );
+});
+
+test("restore keeps records that differ only by source", () => {
+  const store = makeStore();
+  store.restore([
+    makeRecord(100, { source: "test" }),
+    makeRecord(100, { source: "other" }),
+  ]);
+  const history = store.getHistory();
+  assert.equal(history.length, 2);
+  assert.deepEqual(history.map((record) => record.source).sort(), [
+    "other",
+    "test",
+  ]);
+});
+
 test("restore keeps only the newest 100 records", () => {
   const store = makeStore();
   store.restore(Array.from({ length: 105 }, (_, i) => makeRecord(i + 1)));

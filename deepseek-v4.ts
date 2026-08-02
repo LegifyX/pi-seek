@@ -35,10 +35,15 @@ const resolveTimeoutMs = (body: unknown): number => {
   if (Number.isFinite(envValue) && envValue > 0) {
     return envValue * 1000;
   }
-  const maxOutputTokens = isJsonObject(body)
-    ? getNumber(body, "max_output_tokens")
-    : undefined;
-  const tokens = maxOutputTokens ?? 0;
+  // Scale on whichever token cap the body carries: Responses requests use
+  // max_output_tokens, beta chat/completion requests use max_tokens.
+  const tokenBudget = isJsonObject(body)
+    ? Math.max(
+        getNumber(body, "max_output_tokens") ?? 0,
+        getNumber(body, "max_tokens") ?? 0
+      )
+    : 0;
+  const tokens = tokenBudget;
   return tokens > 0
     ? REQUEST_TIMEOUT_MS + tokens * TIMEOUT_MS_PER_TOKEN
     : REQUEST_TIMEOUT_MS;
@@ -253,7 +258,26 @@ interface AuthService {
   resolveApiKey: () => Promise<string>;
 }
 
-const createAuthService = (): AuthService => {
+// models.json may hold a `${NAME}` placeholder instead of a literal key; the
+// README documents `${DEEPSEEK_API_KEY}` as valid, so resolve such values
+// against process.env before use.
+const ENV_PLACEHOLDER_REGEX = /^\$\{([A-Z][A-Z0-9_]*)\}$/;
+
+const interpolateEnv = (value: string): string | undefined => {
+  const match = ENV_PLACEHOLDER_REGEX.exec(value);
+  if (!match) {
+    return value;
+  }
+  return process.env[match[1]]?.trim() || undefined;
+};
+
+const createAuthService = (deps?: {
+  agentDir?: string;
+  readFile?: (path: string) => Promise<string>;
+}): AuthService => {
+  const agentDir = deps?.agentDir ?? getAgentDir();
+  const readConfigFile =
+    deps?.readFile ?? ((path: string) => readFile(path, "utf8"));
   let cachedKey: string | undefined;
 
   const resolveApiKey = async (): Promise<string> => {
@@ -268,17 +292,17 @@ const createAuthService = (): AuthService => {
     }
 
     try {
-      const rawConfig = await readFile(
-        join(getAgentDir(), "models.json"),
-        "utf8"
-      );
+      const rawConfig = await readConfigFile(join(agentDir, "models.json"));
       const config = JSON.parse(rawConfig) as {
         providers?: Record<string, { apiKey?: string }>;
       };
       const configuredKey = config.providers?.[PROVIDER_ID]?.apiKey?.trim();
       if (configuredKey) {
-        cachedKey = configuredKey;
-        return configuredKey;
+        const interpolated = interpolateEnv(configuredKey);
+        if (interpolated) {
+          cachedKey = interpolated;
+          return interpolated;
+        }
       }
     } catch {
       // The error below gives the user both supported key locations.
@@ -349,7 +373,13 @@ const createHttpClient = (auth: AuthService): HttpClient => {
       );
     }
 
-    return await response.json();
+    try {
+      return await response.json();
+    } catch (error) {
+      throw new Error("DeepSeek API returned an invalid JSON response", {
+        cause: error,
+      });
+    }
   };
 
   const postJson = async (
@@ -393,7 +423,13 @@ const createHttpClient = (auth: AuthService): HttpClient => {
       );
     }
 
-    return await response.json();
+    try {
+      return await response.json();
+    } catch (error) {
+      throw new Error("DeepSeek API returned an invalid JSON response", {
+        cause: error,
+      });
+    }
   };
 
   return { getJson, postJson };
@@ -480,51 +516,116 @@ const parseResponsesResult = (rawResponse: unknown): ResponsesResult => {
   };
 };
 
+const buildChatBody = (
+  input: unknown[],
+  options: ResponseChatOptions
+): JsonObject => {
+  const body: JsonObject = {
+    input,
+    model: MODEL_ID,
+    reasoning: { effort: options.effort ?? DEFAULT_EFFORT },
+    stream: false,
+  };
+  if (options.system) {
+    body.instructions = options.system;
+  }
+  if (options.maxOutputTokens) {
+    body.max_output_tokens = options.maxOutputTokens;
+  }
+  return body;
+};
+
+const buildWebSearchBody = (
+  query: string,
+  effort: Effort | undefined,
+  maxOutputTokens: number | undefined
+): JsonObject => {
+  const body: JsonObject = {
+    input: [{ content: [{ text: query, type: "input_text" }], role: "user" }],
+    model: MODEL_ID,
+    reasoning: { effort: effort ?? "low" },
+    stream: false,
+    tool_choice: { type: "web_search" },
+    tools: [{ type: "web_search" }],
+  };
+  if (maxOutputTokens) {
+    body.max_output_tokens = maxOutputTokens;
+  }
+  return body;
+};
+
+const buildPrefixBody = (params: {
+  max_tokens?: number;
+  prefix: string;
+  prompt: string;
+  stop?: string[];
+}): JsonObject => {
+  const body: JsonObject = {
+    messages: [
+      { content: params.prompt, role: "user" },
+      { content: params.prefix, prefix: true, role: "assistant" },
+    ],
+    model: MODEL_ID,
+    stream: false,
+  };
+  if (params.stop?.length) {
+    body.stop = params.stop;
+  }
+  if (params.max_tokens) {
+    body.max_tokens = params.max_tokens;
+  }
+  return body;
+};
+
+const buildFimBody = (params: {
+  max_tokens?: number;
+  prompt: string;
+  stop?: string[];
+  suffix?: string;
+}): JsonObject => {
+  const body: JsonObject = {
+    model: MODEL_ID,
+    prompt: params.prompt,
+    stream: false,
+  };
+  if (params.suffix) {
+    body.suffix = params.suffix;
+  }
+  if (params.max_tokens) {
+    body.max_tokens = params.max_tokens;
+  }
+  if (params.stop?.length) {
+    body.stop = params.stop;
+  }
+  return body;
+};
+
 const createResponsesApi = (http: HttpClient): ResponsesApi => {
   const chat = async (
     input: unknown[],
     options: ResponseChatOptions
-  ): Promise<ResponsesResult> => {
-    const body: JsonObject = {
-      input,
-      model: MODEL_ID,
-      reasoning: { effort: options.effort ?? DEFAULT_EFFORT },
-      stream: false,
-    };
-    if (options.system) {
-      body.instructions = options.system;
-    }
-    if (options.maxOutputTokens) {
-      body.max_output_tokens = options.maxOutputTokens;
-    }
-
-    return parseResponsesResult(
-      await http.postJson("/responses", body, options.signal)
+  ): Promise<ResponsesResult> =>
+    parseResponsesResult(
+      await http.postJson(
+        "/responses",
+        buildChatBody(input, options),
+        options.signal
+      )
     );
-  };
 
   const webSearch = async (
     query: string,
     effort: Effort | undefined,
     maxOutputTokens: number | undefined,
     signal: AbortSignal | undefined
-  ): Promise<ResponsesResult> => {
-    const body: JsonObject = {
-      input: [{ content: [{ text: query, type: "input_text" }], role: "user" }],
-      model: MODEL_ID,
-      reasoning: { effort: effort ?? "low" },
-      stream: false,
-      tool_choice: { type: "web_search" },
-      tools: [{ type: "web_search" }],
-    };
-    if (maxOutputTokens) {
-      body.max_output_tokens = maxOutputTokens;
-    }
-
-    return parseResponsesResult(
-      await http.postJson("/responses", body, signal)
+  ): Promise<ResponsesResult> =>
+    parseResponsesResult(
+      await http.postJson(
+        "/responses",
+        buildWebSearchBody(query, effort, maxOutputTokens),
+        signal
+      )
     );
-  };
 
   return { chat, webSearch };
 };
@@ -621,9 +722,15 @@ const createTelemetryStore = (
   };
 
   const restore = (records: UsageRecord[]): void => {
-    const byTimestamp = new Map<number, UsageRecord>();
+    // Key by ts plus identity fields: two distinct records sharing a
+    // millisecond must not collapse, while true duplicates still dedupe
+    // (last occurrence wins).
+    const byTimestamp = new Map<string, UsageRecord>();
     for (const usageRecord of [...usageHistory, ...records]) {
-      byTimestamp.set(usageRecord.ts, usageRecord);
+      byTimestamp.set(
+        `${usageRecord.ts}|${usageRecord.source}|${usageRecord.totalTokens}`,
+        usageRecord
+      );
     }
     const merged = [...byTimestamp.values()].sort((a, b) => a.ts - b.ts);
     usageHistory.length = 0;
@@ -936,21 +1043,10 @@ const STRICT_STRING_FORMATS = new Set([
   "uuid",
 ]);
 
-const rewriteLocalRef = (reference: string): string => {
-  if (!reference.startsWith("#/")) {
-    return reference;
-  }
-  const segments = reference.slice(2).split("/");
-  const rewritten = segments.map((segment) =>
-    segment === "$defs" ? "$def" : segment
-  );
-  return `#/${rewritten.join("/")}`;
-};
-
 // Refs are normalized to `#/$def/<Name>` pointers. Bare names and the
 // pointer forms `#/$defs/<Name>` and `#/$def/<Name>` all resolve against the
-// definition registry; anything else keeps the legacy `$defs` -> `$def`
-// pointer rewrite.
+// hoisted `$def` definition registry; any other reference is unresolvable and
+// throws instead of leaking into the strict output.
 
 const refName = (reference: string): string | undefined => {
   if (reference.startsWith("#/$defs/") || reference.startsWith("#/$def/")) {
@@ -1009,8 +1105,12 @@ const convertNode = (
   }
   if (typeof schema.$ref === "string") {
     const name = refName(schema.$ref);
-    strictSchema.$ref =
-      name === undefined ? rewriteLocalRef(schema.$ref) : emitRef(name);
+    if (name === undefined) {
+      throw new Error(
+        `Strict schema reference cannot be resolved: ${schema.$ref}`
+      );
+    }
+    strictSchema.$ref = emitRef(name);
   }
 
   normalizeSchemaType(schema, strictSchema, registry);
@@ -1022,6 +1122,21 @@ const convertNode = (
   }
   if (Array.isArray(schema.enum)) {
     strictSchema.enum = schema.enum;
+  }
+  if (
+    strictSchema.type === undefined &&
+    Array.isArray(strictSchema.enum) &&
+    strictSchema.enum.length > 0
+  ) {
+    const enumType = typeof strictSchema.enum[0];
+    if (
+      (enumType === "string" ||
+        enumType === "number" ||
+        enumType === "boolean") &&
+      strictSchema.enum.every((value) => typeof value === enumType)
+    ) {
+      strictSchema.type = enumType;
+    }
   }
   if (Array.isArray(schema.anyOf)) {
     strictSchema.anyOf = schema.anyOf.map((branch) =>
@@ -1294,6 +1409,18 @@ const createDisabledToolResult = () => ({
   details: { disabled: true },
 });
 
+// Raw Responses output can include function_call / web_search_call items.
+// Replaying those as input on the next round (without a paired
+// function_call_output) violates the Responses input contract, so only
+// persistable items are carried across ds_chat rounds.
+const isPersistableItem = (item: unknown): boolean => {
+  if (!isJsonObject(item)) {
+    return true;
+  }
+  const type = getString(item, "type");
+  return type !== "function_call" && type !== "web_search_call";
+};
+
 const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
   const { responses, runtimeState, telemetry, threads } = services;
 
@@ -1323,7 +1450,10 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
           system: thread.system,
         });
 
-        thread.items = [...inputItems, ...result.items];
+        thread.items = [
+          ...inputItems,
+          ...result.items.filter(isPersistableItem),
+        ];
         thread.round += 1;
         const usage = telemetry.mapResponsesUsage(result.usage, "chat");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
@@ -1398,21 +1528,7 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
       }
-      const body: JsonObject = {
-        messages: [
-          { content: params.prompt, role: "user" },
-          { content: params.prefix, prefix: true, role: "assistant" },
-        ],
-        model: MODEL_ID,
-        stream: false,
-      };
-      if (params.stop?.length) {
-        body.stop = params.stop;
-      }
-      if (params.max_tokens) {
-        body.max_tokens = params.max_tokens;
-        body.max_output_tokens = params.max_tokens;
-      }
+      const body = buildPrefixBody(params);
 
       const response = await beta.postChatCompletion(
         body,
@@ -1458,21 +1574,7 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
       }
-      const body: JsonObject = {
-        model: MODEL_ID,
-        prompt: params.prompt,
-        stream: false,
-      };
-      if (params.suffix) {
-        body.suffix = params.suffix;
-      }
-      if (params.max_tokens) {
-        body.max_tokens = params.max_tokens;
-        body.max_output_tokens = params.max_tokens;
-      }
-      if (params.stop?.length) {
-        body.stop = params.stop;
-      }
+      const body = buildFimBody(params);
 
       const response = await beta.postCompletion(
         body,
@@ -1552,6 +1654,38 @@ const registerResponsesTools = (
   });
 };
 
+const extractRequiredFunctionCall = (
+  message: JsonObject,
+  expectedName: string
+): { calledName: string; rawArguments: string } => {
+  const [rawToolCall] = getArray(message, "tool_calls");
+  const toolCall = isJsonObject(rawToolCall) ? rawToolCall : undefined;
+  const calledFunction = getObject(toolCall, "function");
+
+  if (!toolCall) {
+    const content = getString(message, "content") ?? "(no content)";
+    throw new Error(
+      `DeepSeek did not call the required function "${expectedName}": ${content}`
+    );
+  }
+
+  const calledName = getString(calledFunction, "name");
+  if (calledName !== expectedName) {
+    throw new Error(
+      `DeepSeek called "${calledName ?? "(unnamed)"}" instead of required function "${expectedName}"`
+    );
+  }
+
+  const rawArguments = getString(calledFunction, "arguments");
+  if (rawArguments === undefined) {
+    throw new Error(
+      `DeepSeek returned no arguments for required function "${expectedName}"`
+    );
+  }
+
+  return { calledName, rawArguments };
+};
+
 const registerFunctionTool = (
   pi: ExtensionAPI,
   services: ToolServices
@@ -1602,33 +1736,14 @@ const registerFunctionTool = (
         signal ?? context.signal
       );
       const message = getObject(getFirstChoice(response), "message");
-      const [rawToolCall] = getArray(message, "tool_calls");
-      const toolCall = isJsonObject(rawToolCall) ? rawToolCall : undefined;
-      const calledFunction = getObject(toolCall, "function");
       const usage = telemetry.mapChatUsage(response.usage, "function");
       pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
       telemetry.setFooter(context);
 
-      if (!toolCall) {
-        const content = getString(message, "content") ?? "(no content)";
-        throw new Error(
-          `DeepSeek did not call the required function "${params.name}": ${content}`
-        );
-      }
-
-      const calledName = getString(calledFunction, "name");
-      if (calledName !== params.name) {
-        throw new Error(
-          `DeepSeek called "${calledName ?? "(unnamed)"}" instead of required function "${params.name}"`
-        );
-      }
-
-      const rawArguments = getString(calledFunction, "arguments");
-      if (rawArguments === undefined) {
-        throw new Error(
-          `DeepSeek returned no arguments for required function "${params.name}"`
-        );
-      }
+      const { calledName, rawArguments } = extractRequiredFunctionCall(
+        message ?? {},
+        params.name
+      );
 
       let parsedArguments: unknown;
       try {
@@ -2363,12 +2478,20 @@ export { resolveTimeoutMs, toStrictSchema };
 
 export const __test = {
   applyDefaultReasoningEffort,
+  buildChatBody,
+  buildFimBody,
+  buildPrefixBody,
+  buildWebSearchBody,
   collectUsageRecords,
+  createAuthService,
   createBalanceStore,
   createHttpClient,
   createTelemetryStore,
   createThreadStore,
+  extractRequiredFunctionCall,
   extractResponsesText,
+  interpolateEnv,
+  isPersistableItem,
   parseBalance,
   stripUnsupportedThinkingParameters,
   summarizeUsage,

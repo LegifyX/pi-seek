@@ -19,8 +19,15 @@ test("resolveTimeoutMs scales to the maximum output budget", () => {
   );
 });
 
-test("resolveTimeoutMs ignores max_tokens", () => {
-  assert.equal(resolveTimeoutMs({ max_tokens: 4096 }), 90_000);
+test("resolveTimeoutMs scales by max_tokens", () => {
+  assert.equal(resolveTimeoutMs({ max_tokens: 4096 }), 94_096);
+});
+
+test("resolveTimeoutMs takes the larger of the two token caps", () => {
+  assert.equal(
+    resolveTimeoutMs({ max_output_tokens: 16, max_tokens: 4096 }),
+    94_096
+  );
 });
 
 test("resolveTimeoutMs honors a positive env override", (t) => {

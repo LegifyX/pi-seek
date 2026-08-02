@@ -29,6 +29,52 @@ test("non-ok response surfaces the status and a truncated body snippet", async (
   );
 });
 
+test("postJson maps a non-JSON 200 body to an invalid JSON error", async (t) => {
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response("<!doctype html><html><body>gateway</body></html>", {
+        status: 200,
+      })
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  await assert.rejects(
+    createClient().postJson("/responses", {}),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(
+        error.message,
+        "DeepSeek API returned an invalid JSON response"
+      );
+      return true;
+    }
+  );
+});
+
+test("getJson maps a non-JSON 200 body to an invalid JSON error", async (t) => {
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response("<!doctype html><html><body>gateway</body></html>", {
+        status: 200,
+      })
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  await assert.rejects(
+    createClient().getJson("/user/balance"),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(
+        error.message,
+        "DeepSeek API returned an invalid JSON response"
+      );
+      return true;
+    }
+  );
+});
+
 test("ok response returns the parsed JSON body", async (t) => {
   globalThis.fetch = () =>
     Promise.resolve(
