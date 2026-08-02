@@ -1,10 +1,4 @@
 {
-  "type": "module",
-  "pi": {
-    "extensions": [
-      "./src/index.ts"
-    ]
-  },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
     "@earendil-works/pi-coding-agent": "0.83.0",
@@ -21,6 +15,12 @@
     "test:watch": "node --watch --test \"tests/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "verify": "ultracite check && tsc --noEmit && node --test \"tests/**/*.test.ts\""
+  },
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
   },
   "overrides": {
     "brace-expansion": "^5.0.8"
