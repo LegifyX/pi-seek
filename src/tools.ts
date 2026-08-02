@@ -5,6 +5,7 @@ import type {
 import type { BalanceStore } from "./balance.ts";
 import type { BetaApi } from "./beta.ts";
 import { getFirstChoice } from "./beta.ts";
+import { type ChatOutcome, runChatWithRecovery } from "./chat.ts";
 import {
   type DeepSeekRuntimeState,
   getArray,
@@ -14,6 +15,10 @@ import {
   isJsonObject,
   type JsonObject,
   MODEL_ID,
+  type PendingUsageRecord,
+  prependTimeNote,
+  systemHasTimeNote,
+  type Thread,
   USAGE_ENTRY,
 } from "./config.ts";
 import {
@@ -29,9 +34,11 @@ import {
   buildPrefixBody,
   type ResponsesApi,
 } from "./responses.ts";
+import { MAX_RETRIES, withRetries } from "./retry.ts";
 import { toStrictSchema } from "./strict-schema.ts";
 import type { TelemetryStore } from "./telemetry.ts";
 import type { ThreadStore } from "./threads.ts";
+import { type ThreadTrimResult, trimThreadItems } from "./threads.ts";
 
 // ---------------------------------------------------------------------------
 // Tool registrations
@@ -86,12 +93,102 @@ export const isPersistableItem = (item: unknown): boolean => {
   return type !== "function_call" && type !== "web_search_call";
 };
 
+const buildUserMessage = (text: string): JsonObject => ({
+  content: [{ text, type: "input_text" }],
+  role: "user",
+});
+
+// Time note: inject only on the first call or while no caller system is set,
+// and only when the caller did not already provide one. Threads remember the
+// original system, so the note is applied to the request only and never
+// stored into the thread.
+const resolveInstructions = (thread: Thread): string | undefined => {
+  const injectTimeNote =
+    (thread.round === 0 || thread.system === undefined) &&
+    !systemHasTimeNote(thread.system);
+  return injectTimeNote ? prependTimeNote(thread.system) : thread.system;
+};
+
+// Polite interruption: never throw a raw abort error; return a bounded
+// structured result so the parent agent can recover.
+const createInterruptedResult = (phase: "request" | "retry_wait") => ({
+  content: [{ text: "Interrupted by the caller.", type: "text" as const }],
+  details: { interrupted: true, phase },
+});
+
+const buildChatReply = (
+  text: string,
+  calls: JsonObject[],
+  retries: number
+): string => {
+  const notes: string[] = [];
+  if (calls.length > 0) {
+    notes.push(
+      `unexpected function calls in a plain chat: ${JSON.stringify(calls).slice(0, 500)}`
+    );
+  }
+  if (retries > 0) {
+    notes.push(`retried ${retries}x`);
+  }
+  return notes.length > 0 ? `${text}\n\n[note: ${notes.join("; ")}]` : text;
+};
+
+interface ChatDetailsInput {
+  capped: ThreadTrimResult;
+  historyItems: number;
+  outcome: Extract<ChatOutcome, { interrupted: false }>;
+  round: number;
+  system: string | undefined;
+  threadItems: unknown[];
+  threadName: string;
+  usage: PendingUsageRecord;
+}
+
+const buildChatDetails = (input: ChatDetailsInput) => {
+  const details: {
+    history_items?: number;
+    retries?: number;
+    round: number;
+    thinking: string;
+    thread: {
+      items: unknown[];
+      name: string;
+      round: number;
+      system?: string;
+    };
+    trimmed?: number;
+    trimmed_history?: number;
+    usage: PendingUsageRecord;
+  } = {
+    round: input.round,
+    thinking: input.outcome.result.thinking,
+    thread: {
+      items: input.threadItems,
+      name: input.threadName,
+      round: input.round,
+      system: input.system,
+    },
+    usage: input.usage,
+  };
+  if (input.outcome.trimmed > 0) {
+    details.trimmed = input.outcome.trimmed;
+  }
+  if (input.capped.trimmed > 0) {
+    details.history_items = input.historyItems;
+    details.trimmed_history = input.capped.trimmed;
+  }
+  if (input.outcome.retries > 0) {
+    details.retries = input.outcome.retries;
+  }
+  return details;
+};
+
 const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
   const { responses, runtimeState, telemetry, threads } = services;
 
   pi.registerTool({
     description:
-      "Send a message to DeepSeek V4 Flash in a named conversation thread and get the reply. Threads are stateful across calls and keep the full history, so DeepSeek can be run as a sub-agent. Use ds_chat_reset to clear a thread.",
+      "Send a message to DeepSeek V4 Flash in a named conversation thread and get the reply. Threads are stateful across calls and keep the history, so DeepSeek can be run as a sub-agent. Replay is bounded (the last 200 items / 600k chars; oldest first) and transient failures retry with backoff; a context-length failure trims the replay once and retries. Use ds_chat_reset to clear a thread.",
     async execute(_toolCallId, params, signal, _onUpdate, context) {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
@@ -102,45 +199,51 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
           thread.system = params.system;
         }
 
-        const inputItems = [...thread.items];
-        inputItems.push({
-          content: [{ text: params.message, type: "input_text" }],
-          role: "user",
-        });
+        const inputItems = [...thread.items, buildUserMessage(params.message)];
 
-        const result = await responses.chat(inputItems, {
+        // Bounded replay: cap the replayed history (items and characters),
+        // dropping oldest first and always keeping the latest user message.
+        const capped = trimThreadItems(inputItems);
+
+        const outcome = await runChatWithRecovery(responses, capped.items, {
           effort: params.reasoning_effort,
           maxOutputTokens: params.max_output_tokens,
           signal: signal ?? context.signal,
-          system: thread.system,
+          system: resolveInstructions(thread),
         });
 
-        thread.items = [
-          ...inputItems,
-          ...result.items.filter(isPersistableItem),
-        ];
+        if (outcome.interrupted) {
+          return createInterruptedResult(outcome.phase);
+        }
+
+        const usage = telemetry.mapResponsesUsage(outcome.result.usage, "chat");
+        const persistedItems = outcome.result.items.filter(isPersistableItem);
+        thread.items = trimThreadItems([
+          ...capped.items,
+          ...persistedItems,
+        ]).items;
         thread.round += 1;
-        const usage = telemetry.mapResponsesUsage(result.usage, "chat");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
         telemetry.setFooter(context);
 
         const reply =
-          result.calls.length > 0
-            ? `${result.text}\n\n[note: unexpected function calls in a plain chat: ${JSON.stringify(result.calls).slice(0, 500)}]`
-            : result.text;
+          buildChatReply(
+            outcome.result.text,
+            outcome.result.calls,
+            outcome.retries
+          ) || "(empty reply)";
         return {
-          content: [{ text: reply || "(empty reply)", type: "text" as const }],
-          details: {
+          content: [{ text: reply, type: "text" as const }],
+          details: buildChatDetails({
+            capped,
+            historyItems: inputItems.length,
+            outcome,
             round: thread.round,
-            thinking: result.thinking,
-            thread: {
-              items: thread.items,
-              name: params.thread,
-              round: thread.round,
-              system: thread.system,
-            },
+            system: thread.system,
+            threadItems: thread.items,
+            threadName: params.thread,
             usage,
-          },
+          }),
         };
       });
     },
@@ -396,10 +499,12 @@ const registerFunctionTool = (
         ],
       };
 
-      const response = await beta.postChatCompletion(
-        body,
-        signal ?? context.signal
+      const requestSignal = signal ?? context.signal;
+      const outcome = await withRetries(
+        () => beta.postChatCompletion(body, requestSignal),
+        { maxRetries: MAX_RETRIES, signal: requestSignal }
       );
+      const response = outcome.result;
       const message = getObject(getFirstChoice(response), "message");
       const usage = telemetry.mapChatUsage(response.usage, "function");
       pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
@@ -420,14 +525,19 @@ const registerFunctionTool = (
         );
       }
 
+      const callText = `Function call: ${calledName}\nArguments: ${JSON.stringify(parsedArguments, null, 2)}`;
       return {
         content: [
           {
-            text: `Function call: ${calledName}\nArguments: ${JSON.stringify(parsedArguments, null, 2)}`,
+            text:
+              outcome.retries > 0
+                ? `${callText}\n\n[note: retried ${outcome.retries}x]`
+                : callText,
             type: "text" as const,
           },
         ],
         details: {
+          ...(outcome.retries > 0 ? { retries: outcome.retries } : {}),
           arguments: parsedArguments,
           name: calledName,
           rawArguments,

@@ -9,8 +9,15 @@ import {
   summarizeUsage,
 } from "./balance.ts";
 import { createBetaApi } from "./beta.ts";
+import { runChatWithRecovery } from "./chat.ts";
 import { registerCommands } from "./commands.ts";
-import { createRuntimeState, parseBalance } from "./config.ts";
+import {
+  createRuntimeState,
+  formatTimeNote,
+  parseBalance,
+  prependTimeNote,
+  systemHasTimeNote,
+} from "./config.ts";
 import { createAuthService, createHttpClient, interpolateEnv } from "./http.ts";
 import {
   applyDefaultReasoningEffort,
@@ -27,8 +34,19 @@ import {
   createResponsesApi,
   extractResponsesText,
 } from "./responses.ts";
+import {
+  backoffDelayMs,
+  classifyError,
+  isContextLengthError,
+  RetryWaitAbortedError,
+  withRetries,
+} from "./retry.ts";
 import { createTelemetryStore } from "./telemetry.ts";
-import { createThreadStore } from "./threads.ts";
+import {
+  createThreadStore,
+  trimThreadForContext,
+  trimThreadItems,
+} from "./threads.ts";
 import {
   extractRequiredFunctionCall,
   isPersistableItem,
@@ -42,10 +60,12 @@ export { toStrictSchema } from "./strict-schema.ts";
 
 export const __test = {
   applyDefaultReasoningEffort,
+  backoffDelayMs,
   buildChatBody,
   buildFimBody,
   buildPrefixBody,
   buildWebSearchBody,
+  classifyError,
   collectUsageRecords,
   createAuthService,
   createBalanceStore,
@@ -54,11 +74,20 @@ export const __test = {
   createThreadStore,
   extractRequiredFunctionCall,
   extractResponsesText,
+  formatTimeNote,
   interpolateEnv,
+  isContextLengthError,
   isPersistableItem,
   parseBalance,
+  prependTimeNote,
+  RetryWaitAbortedError,
+  runChatWithRecovery,
   stripUnsupportedThinkingParameters,
   summarizeUsage,
+  systemHasTimeNote,
+  trimThreadForContext,
+  trimThreadItems,
+  withRetries,
 };
 
 export default function piSeek(pi: ExtensionAPI): void {

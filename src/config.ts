@@ -44,6 +44,45 @@ export const MAX_OUTPUT_TOKENS = 393_216;
 export const USAGE_HISTORY_LIMIT = 100;
 export const TOKENS_PER_MILLION = 1_000_000;
 
+// Bounded thread replay: threads never replay more than THREAD_MAX_ITEMS
+// items or THREAD_MAX_CHARS characters (whichever binds first); oldest items
+// are dropped, keeping the most recent user message. The context-length
+// trim-and-retry targets half of these caps so the retried request fits
+// comfortably.
+export const THREAD_MAX_ITEMS = 200;
+export const THREAD_MAX_CHARS = 600_000;
+export const CONTEXT_RETRY_MAX_ITEMS = 100;
+export const CONTEXT_RETRY_MAX_CHARS = 300_000;
+
+// Time note injected into ds_chat instructions (see prependTimeNote).
+// Minute precision keeps the note bounded and stable enough that repeated
+// calls within the same minute do not churn the prompt cache.
+export const TIME_NOTE_PATTERN = /current\s*time\s*[:：]?/i;
+
+// Bounded ISO 8601 UTC timestamp, e.g. "2025-08-02T12:34Z".
+export const formatTimeNote = (now: Date): string =>
+  `Current time: ${now.toISOString().slice(0, 16)}Z.`;
+
+export const systemHasTimeNote = (system: string | undefined): boolean =>
+  system !== undefined && TIME_NOTE_PATTERN.test(system);
+
+// Prepends a fresh time note unless the system already carries one. Callers
+// decide when injection applies (ds_chat injects only on the first call or
+// while no caller system is set); threads remember the original system, so
+// the note never gets baked into the stored thread.
+export const prependTimeNote = (
+  system: string | undefined,
+  now: Date = new Date()
+): string | undefined => {
+  if (systemHasTimeNote(system)) {
+    return system;
+  }
+  const note = formatTimeNote(now);
+  return system === undefined || system.trim() === ""
+    ? note
+    : `${note} ${system}`;
+};
+
 // Prices per 1M tokens for deepseek-v4-flash. DeepSeek does not publish a
 // cache-write price for this model.
 export const COST = {
