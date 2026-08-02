@@ -48,14 +48,52 @@ table below.
 |---|---|---|
 | `deepseek-responses` provider (`deepseek-v4-flash`) | 1 | `api: "openai-responses"`, base `https://api.deepseek.com`, apiKey `$DEEPSEEK_API_KEY`, thinking levels `off→none, minimal/low→low, medium/high→high, xhigh→high (clamped), max→max`, contextWindow 1,048,576, maxTokens 393,216, cost input 0.14 / output 0.28 / cacheRead 0.0028 / cacheWrite 0 (per 1M, from the pricing page) |
 | `before_provider_request` guard | 1 | Strips `temperature`/`top_p` while thinking mode is on (the default); the Responses API ignores them in thinking mode but payloads stay clean |
-| `ds_chat` / `ds_chat_reset` | 2 | Named, stateful threads. The DeepSeek Responses API is stateless (`previous_response_id` unsupported), so each round replays full history — same mechanism the runtime itself uses. State persists in tool-result `details`, restored from the session branch |
+| `ds_chat` / `ds_chat_reset` | 2 | Named, stateful threads. The DeepSeek Responses API is stateless (`previous_response_id` unsupported), so each round replays history — bounded to the last 200 items / 600k chars (oldest first; latest user message always kept). State persists in tool-result `details`, restored from the session branch |
 | `ds_prefix_complete` | 3 | Beta `https://api.deepseek.com/beta/chat/completions`, assistant `prefix: true` message + `stop` |
 | `ds_fim` | 3 | Beta `https://api.deepseek.com/beta/completions`, `prompt`/`suffix`/`max_tokens` (4K cap) |
 | `ds_web_search` | 4 | Server-side `web_search` tool via the Responses API |
 | `ds_call_function` + `toStrictSchema` | 4 | Strict-mode function calling at `/beta`, with a TypeBox→strict JSON-Schema converter honoring DeepSeek's strict dialect exactly (object: all required + `additionalProperties:false`; string: pattern/format only; number/integer: const/default/bounds/multipleOf; array: no min/maxItems; enum/anyOf/$ref/$def) |
+| Retries + error taxonomy | 6 | All five fetch tools (`ds_chat`, `ds_web_search`, `ds_prefix_complete`, `ds_call_function`, `ds_fim`) retry transient failures (429, 5xx, network errors, timeouts) with capped exponential backoff (200ms·2ⁿ, jittered 0.9–1.1, max 4 retries); never body-validation errors, aborts, or other 4xx. `retries` in `details` + a bounded `[note: retried Nx]` in the text; `Retry-After` shown in error strings |
+| Context trim-and-retry | 6 | A context-length 400 on `ds_chat` trims the replay once (drop oldest assistant/tool turns first, then older user messages; keep the system prompt and the latest user message, preserving the stable prefix for the prompt cache) and retries exactly once; `trimmed` in `details` |
+| Bounded thread replay | 6 | Threads never replay more than 200 items / 600k chars (constants in `src/config.ts`); `history_items` + `trimmed_history` in `details` when trimming happens |
+| Interruption → structured result | 6 | Aborting a `ds_chat` mid-request never throws: the tool returns "Interrupted by the caller." with `details: { interrupted: true, phase: "request" \| "retry_wait" }` |
+| Time note injection | 6 | `ds_chat` prepends a bounded ISO 8601 UTC note ("Current time: YYYY-MM-DDTHH:MMZ.") to the instructions on the first call or while no caller system is set, unless the caller already provides one; threads remember the original system |
 | `ds_cache`-style telemetry | 5 | `/ds-cache` command, footer `ctx.ui.setStatus` while the provider is active (hit/miss + cost), per-message cost incl. cacheRead/cacheWrite on `turn_end`, hit/miss on every tool call |
 | `/ds` command | 5 | One-shot chat with DeepSeek, rendered as a session entry |
 | `/ds-balance` command | 5 | Remaining DeepSeek account balance plus estimated usage today and this session, lazily refreshed (60s TTL), with fallback to the cached value on fetch failure |
+
+## Resilience (retries, bounded history, interrupts)
+
+- **Error taxonomy** (`src/retry.ts`): errors are classified as retryable (429,
+  5xx, `ECONNRESET`-family network failures, request timeouts), non-retryable
+  (other 4xx, invalid JSON, API misuse), or abort (caller aborted). Unknown
+  errors default to non-retryable so body-validation and misuse failures are
+  never replayed.
+- **Backoff**: capped exponential — 200ms · 2ⁿ, jittered ×0.9–1.1, at most 4
+  retries per request. Retry counts surface as `retries` in tool `details` and
+  as a bounded `[note: retried Nx]` suffix in the tool text.
+- **Trim-and-retry**: a context-length 400 on `ds_chat` (body mentioning
+  context length/window/exceed) trims the oldest replay items — assistant/tool
+  turns before user messages — while keeping the system prompt and the most
+  recent user message, then retries exactly once. The surviving head of the
+  replay stays contiguous so the prompt cache keeps hitting. `trimmed` reports
+  the dropped count; if nothing is droppable (e.g. the overflow is the latest
+  message itself) the original error propagates.
+- **Bounded replay**: threads replay at most 200 items / 600k chars
+  (`THREAD_MAX_ITEMS` / `THREAD_MAX_CHARS` in `src/config.ts`), dropping
+  oldest first and always keeping the latest user message; `history_items` and
+  `trimmed_history` appear in `details` when trimming happened.
+- **Interruptions**: aborting a `ds_chat` request never throws a raw abort
+  error — the tool returns "Interrupted by the caller." with
+  `details: { interrupted: true, phase }` where `phase` is `"request"` or
+  `"retry_wait"` (abort during the backoff wait). The thread state is left
+  untouched so a later call resumes cleanly.
+- **Time note**: on the first `ds_chat` call — or any call while no caller
+  system is set — the instructions get a bounded prepended note
+  "Current time: YYYY-MM-DDTHH:MMZ." (ISO 8601 UTC, minute precision, so
+  repeated calls within a minute don't churn the prompt cache). Callers that
+  provide their own system — or already include a time note — are left alone;
+  threads remember the original system, never the injected note.
 
 ## Reasoning passthrough (the 400 rule)
 
@@ -122,7 +160,23 @@ returns 400; the runtime's responses provider replays it natively. See
 requested token budget: 90s base + 1ms per token (`max_output_tokens` on
 Responses requests, `max_tokens` on beta requests)
 (`src/config.ts:15`). Set `DEEPSEEK_REQUEST_TIMEOUT_MS` (seconds) for an
-absolute override (`src/config.ts:13`).
+absolute override (`src/config.ts:13`). Timeouts are retryable, so the five
+fetch tools retry them up to 4 times with backoff.
+- **`[note: retried 2x]` in a tool reply** — transient failures (429/5xx/
+network/timeout) were retried with capped exponential backoff; the exact
+count is also in the tool `details.retries`. Persistent failures still
+surface the last error with its status code and a short body reason (plus a
+`(retry after Ns)` hint when the API sent a `Retry-After` header).
+- **`Interrupted by the caller.`** — the `ds_chat` request was aborted
+mid-request (`details.phase: "request"`) or while waiting between retries
+(`details.phase: "retry_wait"`). The thread was not modified, so the next
+call resumes from the same history.
+- **`DeepSeek API 400: ... context length ...`** — the replay exceeded the
+context window. `ds_chat` trims the oldest items (assistant/tool turns
+first, keeping the system prompt and the latest user message) and retries
+once; `details.trimmed` reports how many items were dropped. If the overflow
+is inside the parts that must be kept (e.g. the latest message itself), the
+error propagates as-is.
 - **`ds_call_function` with a `$ref` schema** — `$ref`/`$def` schemas are
 supported: `toStrictSchema` collects definitions from every visited node,
 hoists them to a root `$def`, and rewrites refs to `#/$def/<Name>` pointers
