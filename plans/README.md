@@ -64,6 +64,7 @@ exposed the beta timeout-scaling regression, fixed by extending
 | 006  | Characterization tests for telemetry, threads, parsing, payload transforms | P2 | M | 001, 002 | DONE |
 | 007  | README: install & standalone (`pi -ne`) documentation | P3 | S | — | DONE |
 | 008  | Usage tracking + remaining-credit (balance) display | P2 | M | 001–007 | DONE |
+| 009  | Split the deepseek-v4.ts monolith into a multi-file `src/` package | P1 | M | 001–008 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -77,6 +78,8 @@ REJECTED (with one-line rationale).
 - 007 can land anytime but should incorporate the outcomes of 002 (strict-mode
   `$ref` support note), 003 (`DEEPSEEK_REQUEST_TIMEOUT_MS`), and 005 (config
   facts) for a truthful README.
+- 009 needs 001–008: the 118-test verification baseline is the parity safety
+  net for the file split (the plan is a pure move — no behavior change).
 
 ## Findings considered and rejected
 
@@ -92,6 +95,10 @@ REJECTED (with one-line rationale).
   documented in README.
 - Missing runtime deps in package.json: by design — the extension loader's jiti
   aliases resolve them from the pi install.
-- Single-file layout: deliberate, documented in the file header. Plans keep it.
+- Single-file layout: originally deliberate (file header, plans 001–008 kept
+  it); SUPERSEDED by Plan 009 — pi's loader supports multi-file extensions
+  (directory `index.ts`, `package.json` `pi.extensions` manifest, jiti with no
+  bundling), and all three sibling extensions (`pi-ast-grep`, `pi-codemode`,
+  `pi-chimera`) are multi-file packages.
 - `before_provider_request` handler return-value contract: verified correct
   against pi 0.83.0 (`emitBeforeProviderRequest` uses the return value).
