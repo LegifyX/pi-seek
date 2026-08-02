@@ -5,6 +5,9 @@ import { __test } from "../src/index.ts";
 const originalFetch = globalThis.fetch;
 const STATUS_PREFIX = /DeepSeek API/;
 const STATUS_CODE = /503/;
+const RETRY_AFTER_NUMERIC = /\(retry after 2s\)$/;
+const RETRY_AFTER_DATE = /\(retry after Wed, 21 Oct 2015 07:28:00 GMT\)$/;
+const STATUS_429 = /DeepSeek API 429/;
 
 const createClient = (
   resolveApiKey: () => Promise<string> = async () => "k"
@@ -24,6 +27,46 @@ test("non-ok response surfaces the status and a truncated body snippet", async (
       assert.match(error.message, STATUS_PREFIX);
       assert.match(error.message, STATUS_CODE);
       assert.ok(error.message.length <= 420);
+      return true;
+    }
+  );
+});
+
+test("non-ok response appends a retry-after hint when the header is numeric", async (t) => {
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response("busy", { headers: { "retry-after": "2" }, status: 429 })
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  await assert.rejects(
+    createClient().postJson("/responses", {}),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, STATUS_429);
+      assert.match(error.message, RETRY_AFTER_NUMERIC);
+      return true;
+    }
+  );
+});
+
+test("non-ok response passes an HTTP-date retry-after through without a unit", async (t) => {
+  globalThis.fetch = () =>
+    Promise.resolve(
+      new Response("busy", {
+        headers: { "retry-after": "Wed, 21 Oct 2015 07:28:00 GMT" },
+        status: 503,
+      })
+    );
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  await assert.rejects(
+    createClient().postJson("/responses", {}),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, RETRY_AFTER_DATE);
       return true;
     }
   );

@@ -91,6 +91,25 @@ export interface HttpClient {
 const getErrorName = (error: unknown): string | undefined =>
   error instanceof Error ? error.name : undefined;
 
+const RETRY_AFTER_SECONDS_PATTERN = /^\d+$/;
+
+// Retry-After may be a delta-seconds integer or an HTTP-date; the hint is
+// bounded and appended to the error string when present.
+const formatRetryAfterHint = (retryAfter: string | null): string => {
+  if (!retryAfter) {
+    return "";
+  }
+  const suffix = RETRY_AFTER_SECONDS_PATTERN.test(retryAfter) ? "s" : "";
+  return ` (retry after ${retryAfter}${suffix})`;
+};
+
+const throwHttpError = async (response: Response): Promise<never> => {
+  const detail = await response.text().catch(() => "");
+  throw new Error(
+    `DeepSeek API ${response.status}: ${detail.slice(0, 400)}${formatRetryAfterHint(response.headers.get("retry-after"))}`
+  );
+};
+
 export const createHttpClient = (auth: AuthService): HttpClient => {
   const getJson = async (
     path: string,
@@ -125,10 +144,7 @@ export const createHttpClient = (auth: AuthService): HttpClient => {
     }
 
     if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      throw new Error(
-        `DeepSeek API ${response.status}: ${detail.slice(0, 400)}`
-      );
+      await throwHttpError(response);
     }
 
     try {
@@ -175,10 +191,7 @@ export const createHttpClient = (auth: AuthService): HttpClient => {
     }
 
     if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      throw new Error(
-        `DeepSeek API ${response.status}: ${detail.slice(0, 400)}`
-      );
+      await throwHttpError(response);
     }
 
     try {
