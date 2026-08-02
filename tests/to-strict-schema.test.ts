@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Type } from "typebox";
-import { toStrictSchema } from "../deepseek-v4.ts";
+import { toStrictSchema } from "../src/index.ts";
 
 const record = (value: unknown): Record<string, unknown> => {
   assert.ok(

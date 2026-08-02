@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { __test } from "../deepseek-v4.ts";
+import { __test } from "../src/index.ts";
 
 const API_KEY_ENV = "DEEPSEEK_API_KEY";
 const NOT_FOUND_MESSAGE =

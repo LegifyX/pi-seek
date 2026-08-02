@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveTimeoutMs } from "../deepseek-v4.ts";
+import { resolveTimeoutMs } from "../src/index.ts";
 
 const TIMEOUT_ENV = "DEEPSEEK_REQUEST_TIMEOUT_MS";
 

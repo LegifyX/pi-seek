@@ -64,7 +64,7 @@ exposed the beta timeout-scaling regression, fixed by extending
 | 006  | Characterization tests for telemetry, threads, parsing, payload transforms | P2 | M | 001, 002 | DONE |
 | 007  | README: install & standalone (`pi -ne`) documentation | P3 | S | — | DONE |
 | 008  | Usage tracking + remaining-credit (balance) display | P2 | M | 001–007 | DONE |
-| 009  | Split the deepseek-v4.ts monolith into a multi-file `src/` package | P1 | M | 001–008 | TODO |
+| 009  | Split the deepseek-v4.ts monolith into a multi-file `src/` package | P1 | M | 001–008 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

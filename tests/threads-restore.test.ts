@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { __test } from "../deepseek-v4.ts";
+import { __test } from "../src/index.ts";
 
 interface BranchEntry {
   message: {

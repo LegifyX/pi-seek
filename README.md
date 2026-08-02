@@ -10,11 +10,14 @@ see "Reasoning passthrough" below) and Node ≥ 22
 (`@earendil-works/pi-coding-agent` requires `node >=22.19.0`).
 
 1. **Load the extension.** pi's `docs/extensions.md` ("Extension Locations")
-auto-discovers one-file extensions from `~/.pi/agent/extensions/*.ts` (global)
-or `.pi/extensions/*.ts` (project-local); `docs/usage.md` documents the
+auto-discovers extensions from `~/.pi/agent/extensions/*/index.ts` (global)
+or `.pi/extensions/*/index.ts` (project-local); `docs/usage.md` documents the
 explicit form `-e` / `--extension <source>` — "Load an extension from path,
-npm, or git; repeatable". Either copy `deepseek-v4.ts` into one of the
-auto-discovered locations, or run `pi -e /path/to/deepseek-v4.ts`.
+npm, or git; repeatable". The extension is a multi-file package: either copy
+this whole project directory (or just `src/`) into one of the
+auto-discovered locations, or run `pi -e /path/to/pi-seek/src/index.ts`, or
+run `pi -e /path/to/pi-seek` (the directory form uses the `pi.extensions`
+manifest in `package.json`).
 2. **Provide an API key** — from `DEEPSEEK_API_KEY` or the `models.json` merge
 below; both are documented in the "API key" section.
 3. **No `npm install` is required in this repo.** The extension imports
@@ -73,14 +76,15 @@ source.
 
 ## Standalone (`pi -ne`)
 
-The extension is self-contained: `pi -ne -e deepseek-v4.ts` (equivalently
-`pi --no-extensions -e deepseek-v4.ts`) is a complete environment for the six
-tools and four commands with no other extension loaded. pi's CLI help and
-`docs/usage.md` define `--no-extensions, -ne` as "Disable extension discovery
-(explicit -e paths still work)": `-ne` turns off discovery of every
-auto-discovered extension (`~/.pi/agent/extensions/`, `.pi/extensions/`,
-`settings.json` entries), while the extension passed explicitly with `-e`
-still loads.
+The extension is self-contained: `pi -ne -e ./src/index.ts` (equivalently
+`pi --no-extensions -e ./src/index.ts`, or `pi -ne -e .` from the repo root
+via the `pi.extensions` manifest in `package.json`) is a complete
+environment for the six tools and four commands with no other extension
+loaded. pi's CLI help and `docs/usage.md` define `--no-extensions, -ne` as
+"Disable extension discovery (explicit -e paths still work)": `-ne` turns
+off discovery of every auto-discovered extension (`~/.pi/agent/extensions/`,
+`.pi/extensions/`, `settings.json` entries), while the extension passed
+explicitly with `-e` still loads.
 
 The extension does not require pi-chimera or any other extension, and does
 not conflict with them when present: pi's docs describe no cross-extension
@@ -91,7 +95,7 @@ conflict or name-deduplication behavior, and this extension's tool names
 
 ### Operator verification
 
-1. `pi -ne -e /path/to/deepseek-v4.ts` in a scratch directory.
+1. `pi -ne -e /path/to/pi-seek/src/index.ts` in a scratch directory.
 2. Run `/deepseek` — the menu opens: integration on/off, default thinking
 effort, one-shot chat, reset threads, remaining balance, cache telemetry,
 close.
@@ -108,7 +112,7 @@ crashing.
 for the "deepseek-responses" provider in models.json).`** — the key is
 resolved from the `DEEPSEEK_API_KEY` env var first, then from
 `providers["deepseek-responses"].apiKey` in `<agentDir>/models.json`
-(`deepseek-v4.ts:312`; a `${VAR}` placeholder in models.json is resolved
+(`src/http.ts:70`; a `${VAR}` placeholder in models.json is resolved
 against the environment). Both locations are named in the message.
 - **HTTP 400 in thinking mode with tools** — DeepSeek requires
 `reasoning_content` to be passed back on every subsequent request or the API
@@ -117,16 +121,16 @@ returns 400; the runtime's responses provider replays it natively. See
 - **`DeepSeek request timed out`** — the request timeout scales with the
 requested token budget: 90s base + 1ms per token (`max_output_tokens` on
 Responses requests, `max_tokens` on beta requests)
-(`deepseek-v4.ts:29`–`48`). Set `DEEPSEEK_REQUEST_TIMEOUT_MS` (seconds) for an
-absolute override (`deepseek-v4.ts:31`).
+(`src/config.ts:15`). Set `DEEPSEEK_REQUEST_TIMEOUT_MS` (seconds) for an
+absolute override (`src/config.ts:13`).
 - **`ds_call_function` with a `$ref` schema** — `$ref`/`$def` schemas are
 supported: `toStrictSchema` collects definitions from every visited node,
 hoists them to a root `$def`, and rewrites refs to `#/$def/<Name>` pointers
-(`export { toStrictSchema }` at `deepseek-v4.ts:2477`).
+(`export { toStrictSchema }` at `src/index.ts:41`).
 - **Strict-mode gotchas** — `toStrictSchema` enforces DeepSeek's strict
 dialect exactly: object properties are all required with
-`additionalProperties: false` (`deepseek-v4.ts:1235`); string schemas need
+`additionalProperties: false` (`src/strict-schema.ts:204`); string schemas need
 `enum`/`const`/`pattern`/`format`, with formats limited to `email`,
-`hostname`, `ipv4`, `ipv6`, `uuid` (`deepseek-v4.ts:1038`); numbers accept
+`hostname`, `ipv4`, `ipv6`, `uuid` (`src/strict-schema.ts:7`); numbers accept
 `const`/`default`/bounds/`multipleOf`; arrays must not set
 `minItems`/`maxItems`.

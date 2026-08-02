@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["deepseek-v4.ts", "tests"]
+  "include": ["src", "tests"]
 }
