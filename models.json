@@ -6,6 +6,7 @@
       "api": "openai-responses",
       "apiKey": "${DEEPSEEK_API_KEY}",
       "compat": {
+        "requiresReasoningContentOnAssistantMessages": true,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsLongCacheRetention": false,
