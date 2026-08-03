@@ -53,11 +53,11 @@ table below.
 | `ds_fim` | 3 | Beta `https://api.deepseek.com/beta/completions`, `prompt`/`suffix`/`max_tokens` (4K cap) |
 | `ds_web_search` | 4 | Server-side `web_search` tool via the Responses API |
 | `ds_call_function` + `toStrictSchema` | 4 | Strict-mode function calling at `/beta`, with a TypeBox→strict JSON-Schema converter honoring DeepSeek's strict dialect exactly (object: all required + `additionalProperties:false`; string: pattern/format only; number/integer: const/default/bounds/multipleOf; array: no min/maxItems; enum/anyOf/$ref/$def) |
-| Retries + error taxonomy | 6 | All five fetch tools (`ds_chat`, `ds_web_search`, `ds_prefix_complete`, `ds_call_function`, `ds_fim`) retry transient failures (429, 5xx, network errors, timeouts) with capped exponential backoff (200ms·2ⁿ, jittered 0.9–1.1, max 4 retries); never body-validation errors, aborts, or other 4xx. `retries` in `details` + a bounded `[note: retried Nx]` in the text; `Retry-After` shown in error strings |
-| Context trim-and-retry | 6 | A context-length 400 on `ds_chat` trims the replay once (drop oldest assistant/tool turns first, then older user messages; keep the system prompt and the latest user message, preserving the stable prefix for the prompt cache) and retries exactly once; `trimmed` in `details` |
-| Bounded thread replay | 6 | Threads never replay more than 200 items / 600k chars (constants in `src/config.ts`); `history_items` + `trimmed_history` in `details` when trimming happens |
-| Interruption → structured result | 6 | Aborting a `ds_chat` mid-request never throws: the tool returns "Interrupted by the caller." with `details: { interrupted: true, phase: "request" \| "retry_wait" }` |
-| Time note injection | 6 | `ds_chat` prepends a bounded ISO 8601 UTC note ("Current time: YYYY-MM-DDTHH:MMZ.") to the instructions on the first call or while no caller system is set, unless the caller already provides one; threads remember the original system |
+| Retries + error taxonomy | 6 | All five fetch tools retry transient failures (429, 5xx, network, timeouts) with capped exponential backoff, max 4 retries. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
+| Context trim-and-retry | 6 | A context-length 400 on `ds_chat` trims the replay once and retries exactly once. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
+| Bounded thread replay | 6 | Threads replay at most 200 items / 600k chars. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
+| Interruption → structured result | 6 | An aborted `ds_chat` returns "Interrupted by the caller." with `details.interrupted`. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
+| Time note injection | 6 | `ds_chat` prepends a bounded ISO 8601 UTC note unless the caller provides one. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
 | `ds_cache`-style telemetry | 5 | `/ds-cache` command, footer `ctx.ui.setStatus` while the provider is active (hit/miss + cost), per-message cost incl. cacheRead/cacheWrite on `turn_end`, hit/miss on every tool call |
 | `/ds` command | 5 | One-shot chat with DeepSeek, rendered as a session entry |
 | `/ds-balance` command | 5 | Remaining DeepSeek account balance plus estimated usage today and this session, lazily refreshed (60s TTL), with fallback to the cached value on fetch failure |
@@ -91,7 +91,7 @@ table below.
 - **Time note**: on the first `ds_chat` call — or any call while no caller
   system is set — the instructions get a bounded prepended note
   "Current time: YYYY-MM-DDTHH:MMZ." (ISO 8601 UTC, minute precision, so
-  repeated calls within a minute don't churn the prompt cache). Callers that
+  repeated calls within a minute do not churn the prompt cache). Callers that
   provide their own system — or already include a time note — are left alone;
   threads remember the original system, never the injected note.
 
@@ -180,7 +180,7 @@ error propagates as-is.
 - **`ds_call_function` with a `$ref` schema** — `$ref`/`$def` schemas are
 supported: `toStrictSchema` collects definitions from every visited node,
 hoists them to a root `$def`, and rewrites refs to `#/$def/<Name>` pointers
-(`export { toStrictSchema }` at `src/index.ts:41`).
+(`export { toStrictSchema }` at `src/index.ts:59`).
 - **Strict-mode gotchas** — `toStrictSchema` enforces DeepSeek's strict
 dialect exactly: object properties are all required with
 `additionalProperties: false` (`src/strict-schema.ts:204`); string schemas need
