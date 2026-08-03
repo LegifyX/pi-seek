@@ -44,23 +44,23 @@ table below.
 
 ## What it provides
 
-| Piece | Phase | Notes |
-|---|---|---|
-| `deepseek-responses` provider (`deepseek-v4-flash`) | 1 | `api: "openai-responses"`, base `https://api.deepseek.com`, apiKey `$DEEPSEEK_API_KEY`, thinking levels `off→none, minimal/low→low, medium/high→high, xhigh→high (clamped), max→max`, contextWindow 1,048,576, maxTokens 393,216, cost input 0.14 / output 0.28 / cacheRead 0.0028 / cacheWrite 0 (per 1M, from the pricing page) |
-| `before_provider_request` guard | 1 | Strips `temperature`/`top_p` while thinking mode is on (the default); the Responses API ignores them in thinking mode but payloads stay clean |
-| `ds_chat` / `ds_chat_reset` | 2 | Named, stateful threads. The DeepSeek Responses API is stateless (`previous_response_id` unsupported), so each round replays history — bounded to the last 200 items / 600k chars (oldest first; latest user message always kept). State persists in tool-result `details`, restored from the session branch |
-| `ds_prefix_complete` | 3 | Beta `https://api.deepseek.com/beta/chat/completions`, assistant `prefix: true` message + `stop` |
-| `ds_fim` | 3 | Beta `https://api.deepseek.com/beta/completions`, `prompt`/`suffix`/`max_tokens` (4K cap) |
-| `ds_web_search` | 4 | Server-side `web_search` tool via the Responses API |
-| `ds_call_function` + `toStrictSchema` | 4 | Strict-mode function calling at `/beta`, with a TypeBox→strict JSON-Schema converter honoring DeepSeek's strict dialect exactly (object: all required + `additionalProperties:false`; string: pattern/format only; number/integer: const/default/bounds/multipleOf; array: no min/maxItems; enum/anyOf/$ref/$def) |
-| Retries + error taxonomy | 6 | All five fetch tools retry transient failures (429, 5xx, network, timeouts) with capped exponential backoff, max 4 retries. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
-| Context trim-and-retry | 6 | A context-length 400 on `ds_chat` trims the replay once and retries exactly once. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
-| Bounded thread replay | 6 | Threads replay at most 200 items / 600k chars. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
-| Interruption → structured result | 6 | An aborted `ds_chat` returns "Interrupted by the caller." with `details.interrupted`. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
-| Time note injection | 6 | `ds_chat` prepends a bounded ISO 8601 UTC note unless the caller provides one. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
-| `ds_cache`-style telemetry | 5 | `/ds-cache` command, footer `ctx.ui.setStatus` while the provider is active (hit/miss + cost), per-message cost incl. cacheRead/cacheWrite on `turn_end`, hit/miss on every tool call |
-| `/ds` command | 5 | One-shot chat with DeepSeek, rendered as a session entry |
-| `/ds-balance` command | 5 | Remaining DeepSeek account balance plus estimated usage today and this session, lazily refreshed (60s TTL), with fallback to the cached value on fetch failure |
+| Piece | Notes |
+|---|---|
+| `deepseek-responses` provider (`deepseek-v4-flash`) |  `api: "openai-responses"`, base `https://api.deepseek.com`, apiKey `$DEEPSEEK_API_KEY`, thinking levels `off→none, minimal/low→low, medium/high→high, xhigh→high (clamped), max→max`, contextWindow 1,048,576, maxTokens 393,216, cost input 0.14 / output 0.28 / cacheRead 0.0028 / cacheWrite 0 (per 1M, from the pricing page) |
+| `before_provider_request` guard |  Strips `temperature`/`top_p` while thinking mode is on (the default); the Responses API ignores them in thinking mode but payloads stay clean |
+| `ds_chat` / `ds_chat_reset` |  Named, stateful threads. The DeepSeek Responses API is stateless (`previous_response_id` unsupported), so each round replays history — bounded to the last 200 items / 600k chars (oldest first; latest user message always kept). State persists in tool-result `details`, restored from the session branch |
+| `ds_prefix_complete` |  Beta `https://api.deepseek.com/beta/chat/completions`, assistant `prefix: true` message + `stop` |
+| `ds_fim` |  Beta `https://api.deepseek.com/beta/completions`, `prompt`/`suffix`/`max_tokens` (4K cap) |
+| `ds_web_search` |  Server-side `web_search` tool via the Responses API |
+| `ds_call_function` + `toStrictSchema` |  Strict-mode function calling at `/beta`, with a TypeBox→strict JSON-Schema converter honoring DeepSeek's strict dialect exactly (object: all required + `additionalProperties:false`; string: pattern/format only; number/integer: const/default/bounds/multipleOf; array: no min/maxItems; enum/anyOf/$ref/$def) |
+| Retries + error taxonomy |  All five fetch tools retry transient failures (429, 5xx, network, timeouts) with capped exponential backoff, max 4 retries. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
+| Context trim-and-retry |  A context-length 400 on `ds_chat` trims the replay once and retries exactly once. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
+| Bounded thread replay |  Threads replay at most 200 items / 600k chars. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
+| Interruption → structured result |  An aborted `ds_chat` returns "Interrupted by the caller." with `details.interrupted`. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
+| Time note injection |  `ds_chat` prepends a bounded ISO 8601 UTC note unless the caller provides one. Details in [Resilience](#resilience-retries-bounded-history-interrupts) |
+| `ds_cache`-style telemetry |  `/ds-cache` command, footer `ctx.ui.setStatus` while the provider is active (hit/miss + cost), per-message cost incl. cacheRead/cacheWrite on `turn_end`, hit/miss on every tool call |
+| `/ds` command |  One-shot chat with DeepSeek, rendered as a session entry |
+| `/ds-balance` command |  Remaining DeepSeek account balance plus estimated usage today and this session, lazily refreshed (60s TTL), with fallback to the cached value on fetch failure |
 
 ## Resilience (retries, bounded history, interrupts)
 
@@ -119,7 +119,7 @@ The extension is self-contained: `pi -ne -e ./src/index.ts` (equivalently
 via the `pi.extensions` manifest in `package.json`) is a complete
 environment for the six tools and four commands with no other extension
 loaded. pi's CLI help and `docs/usage.md` define `--no-extensions, -ne` as
-"Disable extension discovery (explicit -e paths still work)": `-ne` turns
+"Disable extension discovery". The `-ne` flag turns
 off discovery of every auto-discovered extension (`~/.pi/agent/extensions/`,
 `.pi/extensions/`, `settings.json` entries), while the extension passed
 explicitly with `-e` still loads.
