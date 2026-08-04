@@ -80,14 +80,27 @@ export const extractResponsesText = (
   return { calls, text, thinking };
 };
 
-const parseResponsesResult = (rawResponse: unknown): ResponsesResult => {
+// Result enriched with lifecycle fields from the response envelope: the
+// terminal status and, on an incomplete response, the incomplete_details
+// payload. The base ResponsesResult (in config.ts) stays untouched; this
+// extension lives at the parsing layer.
+export interface ParsedResponsesResult extends ResponsesResult {
+  incompleteDetails?: unknown;
+  status?: string;
+}
+
+export const parseResponsesResult = (
+  rawResponse: unknown
+): ParsedResponsesResult => {
   const response = isJsonObject(rawResponse) ? rawResponse : {};
   const output = getArray(response, "output");
   const extracted = extractResponsesText(output);
   return {
     ...extracted,
+    incompleteDetails: response.incomplete_details,
     items: output,
     responseId: getString(response, "id"),
+    status: getString(response, "status"),
     usage: response.usage,
   };
 };

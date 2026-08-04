@@ -1,0 +1,110 @@
+---
+name: pi-seek
+description: >-
+  DeepSeek V4 Flash toolset for pi. Use when the user wants to chat with
+  DeepSeek in a named conversation thread (running it as a sub-agent with
+  persistent history), complete code or structured text from an assistant
+  prefix or fill the middle of a file, get a web answer with citations
+  through DeepSeek's server-side search, or force DeepSeek to emit a
+  strict-mode function call. Also use for DeepSeek diagnostics: remaining
+  account balance, KV-cache hit/miss cost of the last request, and enabling
+  or disabling the integration.
+---
+
+# pi-seek — DeepSeek V4 Flash toolset
+
+Six tools (`ds_chat`, `ds_chat_reset`, `ds_prefix_complete`, `ds_fim`, `ds_web_search`, `ds_call_function`) plus four user-run commands (`/ds`, `/ds-cache`, `/ds-balance`, `/deepseek`). Pick a branch by the user's intent; each branch below carries its selection rule, inputs, caveats, and completion criterion.
+
+## Gate: enabled + retries
+
+Every tool checks the integration gate first: while disabled, all six return "DeepSeek integration is disabled. Run /deepseek to enable it." with `details.disabled: true` — on that result, ask the user to run `/deepseek` and toggle it on. Retries are selective: `ds_chat` and `ds_call_function` retry transient failures (429, 5xx, network, timeout) with capped backoff, at most 4 retries, surfaced as `details.retries` and a bounded `[note: retried Nx]` text suffix; `ds_prefix_complete`, `ds_fim`, and `ds_web_search` make a single direct call, so a transient failure there throws the underlying API error — no retry, no note. A thrown non-transient error means the call itself was wrong — fix the inputs.
+
+## Branch map
+
+| User intent | Tool | Selection rule |
+|---|---|---|
+| Multi-round chat, DeepSeek as a sub-agent | `ds_chat` | named thread; clear with `ds_chat_reset` |
+| Continue code/structured text from a fixed prefix | `ds_prefix_complete` | assistant prefix + optional stop sequences |
+| Fill the gap between code before and after | `ds_fim` | `prompt` required, `suffix` optional; 4K token cap |
+| Web-grounded answer with citations | `ds_web_search` | fresh facts beyond training |
+| Structured output as a strict function call | `ds_call_function` | typed extraction; thinking is off |
+| Balance / cache / enable state | `/ds-balance`, `/ds-cache`, `/deepseek` | user-run, see Diagnostics |
+
+## Threaded chat — `ds_chat`, `ds_chat_reset`
+
+Intent: multi-round conversation with persistent history; DeepSeek runs as a **sub-agent** on a named **thread**.
+
+`ds_chat` — required `thread` (created on first use) and `message`. Optional `system` (applies only to a NEW thread; ignored once the thread exists), `reasoning_effort` (`low`|`high`|`max`), `max_output_tokens` (≥ 16).
+
+Caveats, co-located:
+- History replay is bounded to the last 200 items / 600k chars, oldest first, latest user message always kept; `details.trimmed_history` and `details.history_items` appear when a trim happened.
+- The first call — or any call while no `system` is set — prepends a bounded
+  "Current time: …" note to the instructions unless the caller's system
+  already carries a time note; threads remember the original system, never the
+  injected note.
+- A context-length 400 trims the replay once and retries once (`details.trimmed`); if nothing is droppable the error propagates.
+- An aborted request returns "Interrupted by the caller." with `details.interrupted` and the thread untouched — resume with the same name.
+- `function_call` / `web_search_call` items are not persisted across rounds.
+- Reply text can carry a `[note: …]` suffix (retries, unexpected function calls — unexpected calls mean the chat should have been `ds_call_function`); an empty reply comes back as `(empty reply)`.
+
+`ds_chat_reset` — optional `thread`; omit to reset ALL threads. Returns the cleared thread's name, or a confirmation that all threads were reset.
+
+Safe ordering: reset a thread before reusing its name for a new topic — the reset also makes `system` apply again on the next `ds_chat`.
+
+Completion criterion (checkable): the reply answers the current `message`; if it is `(empty reply)`, interrupted, or the user needs a next round, call `ds_chat` again on the same `thread` name and the history continues. For `ds_chat_reset`, the returned text confirms exactly what the user asked to clear (`Thread "<name>" reset` or `All DeepSeek threads reset`).
+
+## Code completion — `ds_prefix_complete`, `ds_fim`
+
+Intent: complete code or structured text where the model continues from given context rather than answering freely.
+
+`ds_prefix_complete` — required `prompt` (instruction) and `prefix` (assistant text to continue from, e.g. `"```python\n"`). Optional `stop` (sequences, e.g. `["```"]`), `max_tokens` (1–393216). Returns the continuation; `details.full` is `prefix + completion`.
+
+`ds_fim` — required `prompt` (code before the gap). Optional `suffix` (code after the gap), `stop`, `max_tokens` (API cap 4096). Returns the middle.
+
+Selection: code on both sides of the gap → `ds_fim`; continuing from a known prefix in structured output → `ds_prefix_complete`; both accept `stop` to end at a delimiter.
+
+Completion criterion (checkable): the pieces assemble — `prompt + completion + suffix`, or `prefix + completion` checked against `details.full` — into the intended text, ending at the configured `stop` sequence when one was set.
+
+## Web search — `ds_web_search`
+
+Intent: an answer grounded in live web results, with citations where the API provides them.
+
+`ds_web_search` — required `query`. Optional `reasoning_effort` (`low`|`high`|`max`), `max_output_tokens` (≥ 16). The result is the model's answer, not a raw result list; `details.searchCalls` shows the calls.
+
+Completion criterion (checkable): the answer addresses the query and cites sources when the API returned any; `(no answer)` means reword the query and retry.
+
+## Strict function call — `ds_call_function`
+
+Intent: structured extraction — DeepSeek must emit one named function call whose arguments satisfy a strict schema, rather than free text.
+
+`ds_call_function` — required `name` and `parameters` (a TypeBox-style object schema or plain JSON Schema; normalized to DeepSeek's strict dialect). Optional `context` (the user turn; default "Determine the correct arguments for this function call.") and `description`.
+
+Caveats, co-located:
+- Thinking is disabled for this call — DeepSeek rejects forced tool choice in thinking mode.
+- The strict dialect: object properties all required with `additionalProperties: false`; strings via `enum`/`const`/`pattern`/`format` (formats limited to `email`, `hostname`, `ipv4`, `ipv6`, `uuid`); numbers via `const`/`default`/bounds/`multipleOf`; arrays without `minItems`/`maxItems`; `enum`/`anyOf`/`$ref`/`$def` supported, refs hoisted to `#/$def/<Name>`.
+- It returns the parsed arguments (`details.arguments`) — it does not execute your function.
+- Throws when the model calls no function or a different one (the error carries the model's content) or returns invalid JSON arguments.
+
+Completion criterion (checkable): `details.name` equals the requested `name` and `details.arguments` parse and satisfy the strict schema; on a throw, tighten the schema or enrich `context`, then retry.
+
+## Invocation
+
+All six tool identifiers are plain snake_case, so Fabric reaches them directly in full code mode:
+
+`extensions.ds_chat({thread, message, system?, reasoning_effort?, max_output_tokens?})` · `extensions.ds_chat_reset({thread?})` · `extensions.ds_prefix_complete({prompt, prefix, stop?, max_tokens?})` · `extensions.ds_fim({prompt, suffix?, stop?, max_tokens?})` · `extensions.ds_web_search({query, reasoning_effort?, max_output_tokens?})` · `extensions.ds_call_function({name, parameters, context?, description?})`
+
+Discovery fallback: `tools.search({query: "deepseek"})` to find the tools, `tools.describe({ref: "extensions.<name>"})` for the full input schema, `tools.call({ref, args})` to invoke. Refs are namespaced — bare names are rejected.
+
+## Diagnostics — user-run commands
+
+The four commands are typed by the user; recommend them rather than faking them:
+
+- `/deepseek` — menu: enable/disable the integration, set the default thinking
+  effort (`low`|`high`|`max`; default `high`) used by `/ds` and the agent's own
+  DeepSeek provider requests — tool calls ignore it: `ds_chat` defaults to
+  `high` and `ds_web_search` to `low` when `reasoning_effort` is omitted — plus
+  one-shot chat, reset threads, balance, cache telemetry. Point the user here
+  when a tool returns the disabled result.
+- `/ds <prompt>` — one-shot chat, no thread.
+- `/ds-cache` — KV-cache hit/miss tokens and cost of the last request.
+- `/ds-balance` — remaining account balance plus usage today and this session (60s TTL, falls back to the cached value on fetch failure).

@@ -29,6 +29,13 @@ export interface TelemetryStore {
   setFooter: (context?: ExtensionContext) => void;
 }
 
+// Malformed usage fields (NaN/±Infinity) must never leak into produced
+// numbers: they collapse to 0 for required fields and to absent for the
+// optional reasoning field. Real JSON cannot carry non-finite numbers, but
+// mocks and downstream transforms can, so every number read here is guarded.
+const finite = (value: number | undefined): number | undefined =>
+  value !== undefined && Number.isFinite(value) ? value : undefined;
+
 const calculateCost = (
   input: number,
   output: number,
@@ -54,10 +61,37 @@ export const createTelemetryStore = (
   const usageHistory: UsageRecord[] = [];
 
   const record = (pending: PendingUsageRecord): UsageRecord => {
-    const inputTotal = pending.cacheRead + pending.input;
+    // Normalize every stored number so the ledger never carries NaN or
+    // ±Infinity, no matter what a caller hands in. The dedupe/restore key is
+    // computed after normalization, so it always sees finite values.
+    const cacheRead = finite(pending.cacheRead) ?? 0;
+    const cacheWrite = finite(pending.cacheWrite) ?? 0;
+    const input = finite(pending.input) ?? 0;
+    const output = finite(pending.output) ?? 0;
+    const costInput = finite(pending.cost.input) ?? 0;
+    const costOutput = finite(pending.cost.output) ?? 0;
+    const costCacheRead = finite(pending.cost.cacheRead) ?? 0;
+    const costCacheWrite = finite(pending.cost.cacheWrite) ?? 0;
+    const totalTokens = finite(pending.totalTokens) ?? 0;
+    const reasoning = finite(pending.reasoning);
+    const inputTotal = cacheRead + input;
     const fullRecord: UsageRecord = {
-      ...pending,
-      hitRate: inputTotal > 0 ? pending.cacheRead / inputTotal : 0,
+      cacheRead,
+      cacheWrite,
+      cost: {
+        cacheRead: costCacheRead,
+        cacheWrite: costCacheWrite,
+        input: costInput,
+        output: costOutput,
+        total: costInput + costOutput + costCacheRead + costCacheWrite,
+      },
+      hitRate: inputTotal > 0 ? cacheRead / inputTotal : 0,
+      input,
+      model: pending.model,
+      output,
+      reasoning,
+      source: pending.source,
+      totalTokens,
       ts: Date.now(),
     };
     lastUsage = fullRecord;
@@ -91,15 +125,17 @@ export const createTelemetryStore = (
     rawUsage: unknown,
     source: string
   ): PendingUsageRecord => {
+    // Responses surface only: never read Chat/FIM field names here.
     const usage = isJsonObject(rawUsage) ? rawUsage : undefined;
     const inputDetails = getObject(usage, "input_tokens_details");
     const outputDetails = getObject(usage, "output_tokens_details");
-    const inputTokens = getNumber(usage, "input_tokens") ?? 0;
-    const cacheRead = getNumber(inputDetails, "cached_tokens") ?? 0;
-    const cacheWrite = getNumber(inputDetails, "cache_write_tokens") ?? 0;
+    const inputTokens = finite(getNumber(usage, "input_tokens")) ?? 0;
+    const cacheRead = finite(getNumber(inputDetails, "cached_tokens")) ?? 0;
+    const cacheWrite =
+      finite(getNumber(inputDetails, "cache_write_tokens")) ?? 0;
     const input = Math.max(0, inputTokens - cacheRead - cacheWrite);
-    const output = getNumber(usage, "output_tokens") ?? 0;
-    const reasoning = getNumber(outputDetails, "reasoning_tokens");
+    const output = finite(getNumber(usage, "output_tokens")) ?? 0;
+    const reasoning = finite(getNumber(outputDetails, "reasoning_tokens"));
     return {
       cacheRead,
       cacheWrite,
@@ -110,7 +146,8 @@ export const createTelemetryStore = (
       reasoning,
       source,
       totalTokens:
-        getNumber(usage, "total_tokens") ?? input + output + cacheRead,
+        finite(getNumber(usage, "total_tokens")) ??
+        input + output + cacheRead + cacheWrite,
     };
   };
 
@@ -118,13 +155,15 @@ export const createTelemetryStore = (
     rawUsage: unknown,
     source: string
   ): PendingUsageRecord => {
+    // Chat/FIM surface only: never read Responses field names here.
     const usage = isJsonObject(rawUsage) ? rawUsage : undefined;
-    const cacheRead = getNumber(usage, "prompt_cache_hit_tokens") ?? 0;
-    const promptTokens = getNumber(usage, "prompt_tokens") ?? 0;
-    const input =
-      getNumber(usage, "prompt_cache_miss_tokens") ??
-      Math.max(0, promptTokens - cacheRead);
-    const output = getNumber(usage, "completion_tokens") ?? 0;
+    const outputDetails = getObject(usage, "completion_tokens_details");
+    const cacheRead = finite(getNumber(usage, "prompt_cache_hit_tokens")) ?? 0;
+    const promptTokens = finite(getNumber(usage, "prompt_tokens")) ?? 0;
+    const missTokens = finite(getNumber(usage, "prompt_cache_miss_tokens"));
+    const input = missTokens ?? Math.max(0, promptTokens - cacheRead);
+    const output = finite(getNumber(usage, "completion_tokens")) ?? 0;
+    const reasoning = finite(getNumber(outputDetails, "reasoning_tokens"));
     return {
       cacheRead,
       cacheWrite: 0,
@@ -132,9 +171,10 @@ export const createTelemetryStore = (
       input,
       model: MODEL_ID,
       output,
+      reasoning,
       source,
       totalTokens:
-        getNumber(usage, "total_tokens") ?? input + cacheRead + output,
+        finite(getNumber(usage, "total_tokens")) ?? input + cacheRead + output,
     };
   };
 

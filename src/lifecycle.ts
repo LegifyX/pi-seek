@@ -6,6 +6,7 @@ import { collectUsageRecords } from "./balance.ts";
 import {
   API_KEY_ENV,
   BASE_URL,
+  CONTEXT_WINDOW,
   COST,
   type DeepSeekRuntimeState,
   type Effort,
@@ -40,7 +41,7 @@ export const registerProvider = (pi: ExtensionAPI): void => {
           supportsReasoningEffort: true,
           supportsStrictMode: false,
         },
-        contextWindow: 1_048_576,
+        contextWindow: CONTEXT_WINDOW,
         cost: COST,
         id: MODEL_ID,
         input: ["text"],

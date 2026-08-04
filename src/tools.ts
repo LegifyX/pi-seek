@@ -34,8 +34,8 @@ import {
   buildPrefixBody,
   type ResponsesApi,
 } from "./responses.ts";
-import { MAX_RETRIES, withRetries } from "./retry.ts";
-import { toStrictSchema } from "./strict-schema.ts";
+import { MAX_RETRIES, RetryWaitAbortedError, withRetries } from "./retry.ts";
+import { toStrictSchema, validateStrictArguments } from "./strict-schema.ts";
 import type { TelemetryStore } from "./telemetry.ts";
 import type { ThreadStore } from "./threads.ts";
 import { type ThreadTrimResult, trimThreadItems } from "./threads.ts";
@@ -115,6 +115,13 @@ const createInterruptedResult = (phase: "request" | "retry_wait") => ({
   content: [{ text: "Interrupted by the caller.", type: "text" as const }],
   details: { interrupted: true, phase },
 });
+
+const isCallerAbort = (error: unknown): boolean =>
+  error instanceof RetryWaitAbortedError ||
+  (error instanceof Error && error.message === "Aborted by user");
+
+const interruptedPhase = (error: unknown): "request" | "retry_wait" =>
+  error instanceof RetryWaitAbortedError ? "retry_wait" : "request";
 
 const buildChatReply = (
   text: string,
@@ -297,36 +304,49 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
         return createDisabledToolResult();
       }
       const body = buildPrefixBody(params);
+      const requestSignal = signal ?? context.signal;
 
-      const response = await beta.postChatCompletion(
-        body,
-        signal ?? context.signal
-      );
-      const message = getObject(getFirstChoice(response), "message");
-      const completion = getString(message, "content") ?? "";
-      const usage = telemetry.mapChatUsage(response.usage, "prefix");
-      pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-      telemetry.setFooter(context);
-      const rawUsage = isJsonObject(response.usage)
-        ? response.usage
-        : undefined;
-      return {
-        content: [
-          { text: completion || "(empty completion)", type: "text" as const },
-        ],
-        details: {
-          full: params.prefix + completion,
-          prompt_cache_hit_tokens: getNumber(
-            rawUsage,
-            "prompt_cache_hit_tokens"
-          ),
-          prompt_cache_miss_tokens: getNumber(
-            rawUsage,
-            "prompt_cache_miss_tokens"
-          ),
-          usage,
-        },
-      };
+      try {
+        const outcome = await withRetries(
+          () => beta.postChatCompletion(body, requestSignal),
+          { maxRetries: MAX_RETRIES, signal: requestSignal }
+        );
+        const response = outcome.result;
+        const message = getObject(getFirstChoice(response), "message");
+        const completion = getString(message, "content") ?? "";
+        const usage = telemetry.mapChatUsage(response.usage, "prefix");
+        pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
+        telemetry.setFooter(context);
+        const rawUsage = isJsonObject(response.usage)
+          ? response.usage
+          : undefined;
+        return {
+          content: [
+            {
+              text: completion || "(empty completion)",
+              type: "text" as const,
+            },
+          ],
+          details: {
+            ...(outcome.retries > 0 ? { retries: outcome.retries } : {}),
+            full: params.prefix + completion,
+            prompt_cache_hit_tokens: getNumber(
+              rawUsage,
+              "prompt_cache_hit_tokens"
+            ),
+            prompt_cache_miss_tokens: getNumber(
+              rawUsage,
+              "prompt_cache_miss_tokens"
+            ),
+            usage,
+          },
+        };
+      } catch (error) {
+        if (isCallerAbort(error)) {
+          return createInterruptedResult(interruptedPhase(error));
+        }
+        throw error;
+      }
     },
     label: "DeepSeek Prefix Completion",
     name: "ds_prefix_complete",
@@ -343,34 +363,47 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
         return createDisabledToolResult();
       }
       const body = buildFimBody(params);
+      const requestSignal = signal ?? context.signal;
 
-      const response = await beta.postCompletion(
-        body,
-        signal ?? context.signal
-      );
-      const completion = getString(getFirstChoice(response), "text") ?? "";
-      const usage = telemetry.mapChatUsage(response.usage, "fim");
-      pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-      telemetry.setFooter(context);
-      const rawUsage = isJsonObject(response.usage)
-        ? response.usage
-        : undefined;
-      return {
-        content: [
-          { text: completion || "(empty completion)", type: "text" as const },
-        ],
-        details: {
-          prompt_cache_hit_tokens: getNumber(
-            rawUsage,
-            "prompt_cache_hit_tokens"
-          ),
-          prompt_cache_miss_tokens: getNumber(
-            rawUsage,
-            "prompt_cache_miss_tokens"
-          ),
-          usage,
-        },
-      };
+      try {
+        const outcome = await withRetries(
+          () => beta.postCompletion(body, requestSignal),
+          { maxRetries: MAX_RETRIES, signal: requestSignal }
+        );
+        const response = outcome.result;
+        const completion = getString(getFirstChoice(response), "text") ?? "";
+        const usage = telemetry.mapChatUsage(response.usage, "fim");
+        pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
+        telemetry.setFooter(context);
+        const rawUsage = isJsonObject(response.usage)
+          ? response.usage
+          : undefined;
+        return {
+          content: [
+            {
+              text: completion || "(empty completion)",
+              type: "text" as const,
+            },
+          ],
+          details: {
+            ...(outcome.retries > 0 ? { retries: outcome.retries } : {}),
+            prompt_cache_hit_tokens: getNumber(
+              rawUsage,
+              "prompt_cache_hit_tokens"
+            ),
+            prompt_cache_miss_tokens: getNumber(
+              rawUsage,
+              "prompt_cache_miss_tokens"
+            ),
+            usage,
+          },
+        };
+      } catch (error) {
+        if (isCallerAbort(error)) {
+          return createInterruptedResult(interruptedPhase(error));
+        }
+        throw error;
+      }
     },
     label: "DeepSeek FIM Completion",
     name: "ds_fim",
@@ -393,27 +426,42 @@ const registerResponsesTools = (
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
       }
-      const result = await responses.webSearch(
-        params.query,
-        params.reasoning_effort,
-        params.max_output_tokens,
-        signal ?? context.signal
-      );
-      const usage = telemetry.mapResponsesUsage(result.usage, "search");
-      pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-      telemetry.setFooter(context);
-      return {
-        content: [
-          { text: result.text || "(no answer)", type: "text" as const },
-        ],
-        details: {
-          query: params.query,
-          responseId: result.responseId,
-          searchCalls: result.calls,
-          thinking: result.thinking,
-          usage,
-        },
-      };
+      const requestSignal = signal ?? context.signal;
+
+      try {
+        const outcome = await withRetries(
+          () =>
+            responses.webSearch(
+              params.query,
+              params.reasoning_effort,
+              params.max_output_tokens,
+              requestSignal
+            ),
+          { maxRetries: MAX_RETRIES, signal: requestSignal }
+        );
+        const { result } = outcome;
+        const usage = telemetry.mapResponsesUsage(result.usage, "search");
+        pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
+        telemetry.setFooter(context);
+        return {
+          content: [
+            { text: result.text || "(no answer)", type: "text" as const },
+          ],
+          details: {
+            ...(outcome.retries > 0 ? { retries: outcome.retries } : {}),
+            query: params.query,
+            responseId: result.responseId,
+            searchCalls: result.calls,
+            thinking: result.thinking,
+            usage,
+          },
+        };
+      } catch (error) {
+        if (isCallerAbort(error)) {
+          return createInterruptedResult(interruptedPhase(error));
+        }
+        throw error;
+      }
     },
     label: "DeepSeek Web Search",
     name: "ds_web_search",
@@ -522,6 +570,16 @@ const registerFunctionTool = (
         throw new Error(
           `DeepSeek returned invalid JSON arguments for required function "${params.name}"`,
           { cause: error }
+        );
+      }
+
+      const validationFailures = validateStrictArguments(
+        strictParameters,
+        parsedArguments
+      );
+      if (validationFailures.length > 0) {
+        throw new Error(
+          `DeepSeek returned schema-invalid arguments for required function "${params.name}": ${validationFailures.slice(0, 3).join("; ")}`
         );
       }
 

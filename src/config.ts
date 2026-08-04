@@ -40,6 +40,7 @@ export const USAGE_ENTRY = "ds-usage";
 export const MENU_STATUS_KEY = "deepseek-menu";
 export const BALANCE_URL = "/user/balance";
 export const BALANCE_TTL_MS = 60_000;
+export const CONTEXT_WINDOW = 1_048_576;
 export const MAX_OUTPUT_TOKENS = 393_216;
 export const USAGE_HISTORY_LIMIT = 100;
 export const TOKENS_PER_MILLION = 1_000_000;
@@ -157,11 +158,11 @@ export interface UsageRecord {
 
 export type PendingUsageRecord = Omit<UsageRecord, "hitRate" | "ts">;
 
-interface BalanceInfo {
+interface RawBalanceInfo {
   currency: string;
-  grantedBalance: number;
-  toppedUpBalance: number;
-  totalBalance: number;
+  grantedBalance?: number;
+  toppedUpBalance?: number;
+  totalBalance?: number;
 }
 
 export interface BalanceState {
@@ -181,16 +182,25 @@ export interface UsageSummary {
   output: number;
 }
 
-const parseAmount = (value: unknown): number => {
+// Parses a balance amount that arrives as a string ("24.62"). Anything that
+// is not a finite number (missing, non-numeric, NaN, Infinity) returns
+// undefined so callers can tell a real zero from a malformed value.
+const parseAmount = (value: unknown): number | undefined => {
   const parsed = typeof value === "string" ? Number(value) : value;
-  return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : 0;
+  return typeof parsed === "number" && Number.isFinite(parsed)
+    ? parsed
+    : undefined;
 };
 
 // Balance amounts arrive as strings ("24.62"); parse defensively and prefer
-// the USD entry when an account carries multiple currencies.
+// the USD entry when an account carries multiple currencies. Unparseable
+// amounts normalize to 0, but a payload with no usable balance info at all
+// (a non-object body, absent/empty balance_infos, every entry malformed) or
+// an explicit is_available:false reports as unavailable, so a valid zero
+// balance stays distinguishable from a malformed response.
 export const parseBalance = (raw: unknown): Omit<BalanceState, "fetchedAt"> => {
   const body = isJsonObject(raw) ? raw : {};
-  const entries: BalanceInfo[] = getArray(body, "balance_infos")
+  const entries: RawBalanceInfo[] = getArray(body, "balance_infos")
     .filter(isJsonObject)
     .map((info) => ({
       currency: getString(info, "currency") ?? "USD",
@@ -198,12 +208,19 @@ export const parseBalance = (raw: unknown): Omit<BalanceState, "fetchedAt"> => {
       toppedUpBalance: parseAmount(info.topped_up_balance),
       totalBalance: parseAmount(info.total_balance),
     }));
+  const hasUsableEntry = entries.some(
+    (entry) =>
+      entry.grantedBalance !== undefined ||
+      entry.toppedUpBalance !== undefined ||
+      entry.totalBalance !== undefined
+  );
   const preferred =
     entries.find((entry) => entry.currency === "USD") ?? entries[0];
+  const isAvailable = body.is_available !== false && hasUsableEntry;
   return {
     currency: preferred?.currency ?? "USD",
     grantedBalance: preferred?.grantedBalance ?? 0,
-    isAvailable: body.is_available !== false,
+    isAvailable,
     toppedUpBalance: preferred?.toppedUpBalance ?? 0,
     totalBalance: preferred?.totalBalance ?? 0,
   };
