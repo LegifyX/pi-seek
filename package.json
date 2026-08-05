@@ -40,5 +40,11 @@
   "version": "0.2.0",
   "engines": {
     "node": ">=24"
-  }
+  },
+  "files": [
+    "src/",
+    "skills/",
+    "models.json",
+    "README.md"
+  ]
 }
