@@ -1,6 +1,7 @@
 {
   "keywords": [
-    "pi-package"
+    "pi-package",
+    "pi-extension"
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -46,5 +47,9 @@
     "skills/",
     "models.json",
     "README.md"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bjoernaagaard/pi-seek.git"
+  }
 }

@@ -57,8 +57,45 @@ pi-seek adds one provider, six tools, and four commands to Pi.
 
 ## Installation
 
-1. Load the extension. Run `pi -e /path/to/pi-seek/src/index.ts`. Or copy the project into the extension directory of Pi.
-2. Set the API key. Set the environment variable `DEEPSEEK_API_KEY`. Or add the `apiKey` for the `deepseek-responses` provider to the `models.json` file.
+**From npm (preferred).** The extension is published on npm.
+
+```
+pi install npm:@juvio15/pi-seek
+```
+
+To update the extension:
+
+```
+pi update npm:@juvio15/pi-seek
+```
+
+To remove the extension:
+
+```
+pi remove npm:@juvio15/pi-seek
+```
+
+**From GitHub.** The source code is on GitHub.
+
+```
+pi install git:github.com/bjoernaagaard/pi-seek
+```
+
+You can pin a release. Add `@v0.3.0` to the command.
+
+**From a local copy.**
+
+```
+pi install /path/to/pi-seek
+```
+
+**Try without installing.** Add the `-e` option. The extension loads for the current run only.
+
+```
+pi -e npm:@juvio15/pi-seek
+```
+
+**Set the API key.** Set the environment variable `DEEPSEEK_API_KEY`. Or add the `apiKey` for the `deepseek-responses` provider to the `models.json` file.
 
 ## Configuration
 
