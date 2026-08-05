@@ -28,6 +28,8 @@ test("responses row agrees with the registered provider constants", () => {
   assert.equal(responses.availability, "documented");
   assert.equal(responses.limits.contextWindow, CONTEXT_WINDOW);
   assert.equal(responses.limits.maxOutputTokens, MAX_OUTPUT_TOKENS);
+  assert.equal(responses.liveProbe?.date, "2026-08-04");
+  assert.equal(responses.liveProbe?.source, "live probe 2026-08-04");
 });
 
 test("chat row agrees with the config constants", () => {
@@ -40,27 +42,37 @@ test("chat row agrees with the config constants", () => {
   assert.equal(chat.limits.contextWindow, CONTEXT_WINDOW);
 });
 
-test("prefix and FIM use the beta base and keep Flash availability unresolved", () => {
+test("prefix and FIM use the beta base; Flash availability is live-verified", () => {
   const prefix = getSurface("prefix");
   assert.ok(prefix);
   assert.equal(prefix.baseUrl, BETA_URL);
   assert.equal(prefix.path, "/chat/completions");
-  assert.equal(prefix.availability, "unresolved");
-  assert.equal(prefix.documentedModels.includes(MODEL_ID), false);
+  assert.equal(prefix.availability, "documented");
+  assert.ok(prefix.documentedModels.includes(MODEL_ID));
+  assert.equal(prefix.liveProbe?.date, "2026-08-04");
+  assert.equal(prefix.liveProbe?.source, "live probe 2026-08-04");
 
   const fim = getSurface("fim");
   assert.ok(fim);
   assert.equal(fim.baseUrl, BETA_URL);
   assert.equal(fim.path, "/completions");
-  assert.equal(fim.availability, "unresolved");
+  assert.equal(fim.availability, "documented");
   assert.equal(fim.limits.fimMaxTokens, 4096);
+  assert.equal(fim.liveProbe?.date, "2026-08-04");
 });
 
-test("balance and models rows use the base URL", () => {
-  assert.equal(getSurface("balance")?.baseUrl, BASE_URL);
-  assert.equal(getSurface("balance")?.path, "/user/balance");
-  assert.equal(getSurface("models")?.baseUrl, BASE_URL);
-  assert.equal(getSurface("models")?.path, "/models");
+test("balance and models rows use the base URL and carry live schema facts", () => {
+  const balance = getSurface("balance");
+  assert.ok(balance);
+  assert.equal(balance.baseUrl, BASE_URL);
+  assert.equal(balance.path, "/user/balance");
+  assert.equal(balance.liveProbe?.source, "live probe 2026-08-04");
+
+  const models = getSurface("models");
+  assert.ok(models);
+  assert.equal(models.baseUrl, BASE_URL);
+  assert.equal(models.path, "/models");
+  assert.equal(models.liveProbe?.source, "live probe 2026-08-04");
 });
 
 test("no row claims support for previous_response_id/conversation/store", () => {

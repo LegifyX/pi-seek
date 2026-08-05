@@ -48,3 +48,37 @@ Worker self-verification totals (point-in-time during parallel work): seek-meta 
 - V4 Flash beta prefix/FIM availability remains **unresolved** (documented only for Pro in the FIM reference; pricing lists both) — intentionally not promoted to fact.
 - Responses Pro support on `POST /responses`, exact numeric request limits, cache-write pricing, full field-level SSE schemas, official retry/idempotency guidance, and `GET /user/balance` schema details remain unresolved per the research report.
 - No live/authenticated DeepSeek call was made. The report's approval-gated plan (GET /models, GET /user/balance, minimal POST /responses, beta prefix/FIM availability, strict function-call behavior, retry/429 behavior) still requires explicit user approval plus a non-production credential.
+
+## Live verification (2026-08-04)
+
+Follow-up live-verification swarm (`runs/live-2026-08-04`; evidence log in
+`docs/research/live-verification-2026-08-04.md`) ran authenticated probes
+against the production API on 2026-08-04. The compatibility matrix
+(`src/compatibility.ts`) now carries dated `live probe 2026-08-04`
+annotations for every verified finding.
+
+**Resolved (live-verified):**
+- Beta prefix and FIM surfaces accept both `deepseek-v4-flash` and
+  `deepseek-v4-pro` (HTTP 200); V4 Flash availability is no longer
+  `unresolved` on either surface.
+- `GET /models` returns `deepseek-v4-flash` and `deepseek-v4-pro` with
+  per-model fields `id`, `object`, `owned_by`.
+- `GET /user/balance` schema: top-level `is_available` + `balance_infos`;
+  entries carry `granted_balance`, `topped_up_balance`, `total_balance`;
+  `is_available: false` observed.
+- Responses streaming confirmed: monotonic `sequence_number`, no `[DONE]`,
+  terminal event `response.incomplete`, observed event families recorded.
+- Strict function-call + validator behavior confirmed live (valid accepted;
+  invalid fixtures rejected with typed messages).
+- `POST /responses` with `deepseek-v4-flash` returns `reasoning` +
+  `message` output items and the documented usage paths
+  (`input_tokens_details.cached_tokens`, `output_tokens_details.reasoning_tokens`).
+
+**Still unresolved / contradictions:**
+- `deepseek-v4-pro` on `POST /responses` is rejected (HTTP 400; integration
+  announced for early August 2026) — Pro support stays `unresolved` on the
+  Responses surface.
+- FIM boundary probe: `max_tokens: 4097` was **accepted** (HTTP 200),
+  contradicting the documented 4K cap; the matrix keeps 4096 as documented and
+  records the contradiction.
+

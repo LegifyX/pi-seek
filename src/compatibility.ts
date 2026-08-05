@@ -40,6 +40,8 @@ export interface CompatibilityRow {
   baseUrl: string;
   documentedModels: string[];
   limits: CompatibilityLimits;
+  /** Live probe verification record (2026-08-04). */
+  liveProbe?: LiveProbe;
   method: "GET" | "POST";
   notes: string[];
   path: string;
@@ -52,6 +54,12 @@ export interface CompatibilityRow {
   unsupportedFeatures: string[];
 }
 
+interface LiveProbe {
+  date: string;
+  result: string;
+  source: string;
+}
+
 export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
   {
     availability: "documented",
@@ -61,11 +69,21 @@ export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
       contextWindow: CONTEXT_WINDOW,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
     },
+    liveProbe: {
+      date: "2026-08-04",
+      result:
+        "deepseek-v4-flash accepted; deepseek-v4-pro rejected (HTTP 400; Pro integration available early August 2026). Streaming: 9 event families, monotonic sequence_number, no [DONE], terminal response.incomplete, no keep-alive. Strict function-call validator live.",
+      source: "live probe 2026-08-04",
+    },
     method: "POST",
     notes: [
       "stateless; previous_response_id/conversation/store and server-side persistence are unsupported",
       "documented model max is 384K output tokens; local registration uses 393216",
       "Pro support is planned in the guide; not yet documented",
+      "live probe 2026-08-04: deepseek-v4-pro rejected on POST /responses (HTTP 400: Codex integration with deepseek-v4-pro available starting early August 2026); Pro stays unresolved",
+      "live probe 2026-08-04: non-streaming call returned reasoning + message output items; usage paths input_tokens_details.cached_tokens and output_tokens_details.reasoning_tokens",
+      "live probe 2026-08-04: streaming emitted response.created, response.in_progress, response.output_item.added, response.content_part.added, response.reasoning_text.delta, response.reasoning_text.done, response.content_part.done, response.output_item.done, response.incomplete; sequence_number monotonic; no keep-alive comments; no [DONE]; terminal event response.incomplete",
+      "live probe 2026-08-04: strict function-call accepted valid arguments (tool_call_id, name, valid JSON) and rejected invalid fixtures with typed validator messages",
     ],
     path: "/responses",
     reasoning: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
@@ -95,14 +113,20 @@ export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
     unsupportedFeatures: [...STATELESS_UNSUPPORTED],
   },
   {
-    availability: "unresolved",
+    availability: "documented",
     baseUrl: BETA_URL,
-    documentedModels: ["deepseek-v4-pro"],
+    documentedModels: [MODEL_ID, "deepseek-v4-pro"],
     limits: { contextWindow: CONTEXT_WINDOW },
+    liveProbe: {
+      date: "2026-08-04",
+      result:
+        "beta /chat/completions prefix accepted deepseek-v4-flash and deepseek-v4-pro (HTTP 200)",
+      source: "live probe 2026-08-04",
+    },
     method: "POST",
     notes: [
       "final assistant message must use prefix:true",
-      "documented examples use Pro; V4 Flash availability is unresolved",
+      "live probe 2026-08-04: beta prefix accepted deepseek-v4-flash and deepseek-v4-pro (HTTP 200)",
     ],
     path: "/chat/completions",
     reasoning: [],
@@ -116,14 +140,21 @@ export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
     unsupportedFeatures: [...STATELESS_UNSUPPORTED],
   },
   {
-    availability: "unresolved",
+    availability: "documented",
     baseUrl: BETA_URL,
-    documentedModels: ["deepseek-v4-pro"],
+    documentedModels: [MODEL_ID, "deepseek-v4-pro"],
     limits: { fimMaxTokens: 4096 },
+    liveProbe: {
+      date: "2026-08-04",
+      result:
+        "beta /completions accepted deepseek-v4-flash and deepseek-v4-pro; max_tokens 4097 accepted, contradicting the documented 4K cap (kept at 4096)",
+      source: "live probe 2026-08-04",
+    },
     method: "POST",
     notes: [
-      "max_tokens cap is 4K",
-      "reference lists Pro while pricing says both models; Flash availability is unresolved",
+      "max_tokens cap is documented as 4K; kept at 4096",
+      "live probe 2026-08-04: beta /completions accepted deepseek-v4-flash and deepseek-v4-pro (HTTP 200)",
+      "live probe 2026-08-04: max_tokens 4097 was ACCEPTED (HTTP 200), contradicting the documented 4K cap; cap stays 4096 as documented",
     ],
     path: "/completions",
     reasoning: [],
@@ -141,8 +172,17 @@ export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
     baseUrl: BASE_URL,
     documentedModels: [],
     limits: {},
+    liveProbe: {
+      date: "2026-08-04",
+      result:
+        "GET /user/balance 200; top-level is_available + balance_infos; entries with granted_balance/topped_up_balance/total_balance; is_available false observed",
+      source: "live probe 2026-08-04",
+    },
     method: "GET",
-    notes: ["Bearer auth; response contains balance information"],
+    notes: [
+      "Bearer auth; response contains balance information",
+      "live probe 2026-08-04: top-level fields is_available and balance_infos; entries carry granted_balance, topped_up_balance, total_balance; is_available false observed (no balance amounts recorded)",
+    ],
     path: "/user/balance",
     reasoning: [],
     sources: ["https://api-docs.deepseek.com/api/get-user-balance/"],
@@ -156,8 +196,17 @@ export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
     baseUrl: BASE_URL,
     documentedModels: [],
     limits: {},
+    liveProbe: {
+      date: "2026-08-04",
+      result:
+        "GET /models 200; ids deepseek-v4-flash and deepseek-v4-pro; per-model fields id, object, owned_by",
+      source: "live probe 2026-08-04",
+    },
     method: "GET",
-    notes: ["official listing endpoint; not called during research"],
+    notes: [
+      "official listing endpoint; not called during research",
+      "live probe 2026-08-04: returns deepseek-v4-flash and deepseek-v4-pro; per-model fields id, object, owned_by",
+    ],
     path: "/models",
     reasoning: [],
     sources: ["https://api-docs.deepseek.com/api/list-models/"],
