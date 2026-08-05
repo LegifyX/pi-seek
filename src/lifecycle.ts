@@ -34,12 +34,21 @@ export const registerProvider = (pi: ExtensionAPI): void => {
     baseUrl: BASE_URL,
     models: [
       {
+        // The openai-responses adapter reads only OpenAIResponsesCompat fields
+        // (supportsDeveloperRole, sessionAffinityFormat, supportsLongCacheRetention,
+        // supportsStrictMode, supportsOpenAIGrammarTools, supportsToolSearch,
+        // supportsExplicitPromptCacheMode); Chat-Completions-only flags such as
+        // requiresReasoningContentOnAssistantMessages and supportsReasoningEffort
+        // are therefore not shipped. DeepSeek's 400 rule (reasoning_content must be
+        // replayed on every follow-up request) is handled natively by the adapter's
+        // thinkingSignature replay, and effort is controlled via thinkingLevelMap
+        // plus reasoning.effort.
         compat: {
-          requiresReasoningContentOnAssistantMessages: true,
           supportsDeveloperRole: false,
           supportsLongCacheRetention: false,
-          supportsReasoningEffort: true,
-          supportsStrictMode: false,
+          // The Responses endpoint accepts strict:true function tools (live
+          // verified), so the provider emits strict JSON-schema tools.
+          supportsStrictMode: true,
         },
         contextWindow: CONTEXT_WINDOW,
         cost: COST,

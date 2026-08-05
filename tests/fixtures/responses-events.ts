@@ -4,9 +4,9 @@
 // Source-versioned fixtures for the DeepSeek Responses streaming event model
 // and result shapes documented in
 // docs/research/deepseek-api-surface-2026-08-04.md. Responses SSE carries
-// semantic events with monotonically increasing sequence numbers plus
-// `: keep-alive` comment lines; it has no `[DONE]` marker (unlike the
-// Chat/FIM SSE surface). Responses usage uses
+// semantic events with monotonically increasing sequence numbers and
+// optional `: keep-alive` comment lines; it has no `[DONE]` marker
+// (unlike the Chat/FIM SSE surface). Responses usage uses
 // input_tokens_details.cached_tokens and output_tokens_details.reasoning_tokens
 // and never the Chat/FIM prompt_cache_* fields.
 // ---------------------------------------------------------------------------
@@ -333,8 +333,10 @@ export const customToolCompletedResponseResult: JsonObject = {
 };
 
 // Streams ------------------------------------------------------------------
-// Each stream: monotonically increasing sequence_number, at least one
-// `: keep-alive` comment, a terminal event, and no [DONE] marker.
+// Each stream: monotonically increasing sequence_number, a terminal event,
+// and no [DONE] marker. Keep-alive comments are optional: streaming requests
+// "may" receive them (research doc) and the live probe observed none, so the
+// fixtures cover streams both with and without them.
 
 export const completedStream: ResponsesStream = {
   lines: [
@@ -618,9 +620,10 @@ export const completedStream: ResponsesStream = {
   name: "completed",
 };
 
+// Mirrors the live-verified streaming probe (terminal `response.incomplete`,
+// no keep-alive comments): keep-alives are optional on this surface.
 export const incompleteStream: ResponsesStream = {
   lines: [
-    { kind: "comment", text: KEEP_ALIVE_COMMENT },
     {
       event: {
         response: {
@@ -647,7 +650,6 @@ export const incompleteStream: ResponsesStream = {
       },
       kind: "event",
     },
-    { kind: "comment", text: KEEP_ALIVE_COMMENT },
     {
       event: {
         item: {
@@ -720,7 +722,6 @@ export const incompleteStream: ResponsesStream = {
       },
       kind: "event",
     },
-    { kind: "comment", text: KEEP_ALIVE_COMMENT },
     {
       event: {
         response: incompleteResponseResult,

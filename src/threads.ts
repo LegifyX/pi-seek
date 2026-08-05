@@ -209,13 +209,6 @@ export const createThreadStore = (): ThreadStore => {
   const snapshot = (): Record<string, Thread> =>
     Object.fromEntries(threads.entries());
 
-  const applyLegacySnapshot = (snapshotMap: Record<string, Thread>): void => {
-    threads.clear();
-    for (const [name, thread] of Object.entries(snapshotMap)) {
-      threads.set(name, thread);
-    }
-  };
-
   const applyReset = (
     resetAction: { kind: "all" } | { kind: "thread"; name: string }
   ): void => {
@@ -244,14 +237,8 @@ export const createThreadStore = (): ThreadStore => {
       | {
           reset?: { kind: "all" } | { kind: "thread"; name: string };
           thread?: Thread & { name: string };
-          threads?: Record<string, Thread>;
         }
       | undefined;
-    if (details?.threads) {
-      // Legacy shape from versions that snapshotted the whole map.
-      applyLegacySnapshot(details.threads);
-      return;
-    }
     if (message.toolName === "ds_chat" && details?.thread?.name) {
       const { items, name, round, system } = details.thread;
       threads.set(name, { items, round, system });

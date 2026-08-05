@@ -10,6 +10,7 @@ import {
   type ResponsesResult,
 } from "./config.ts";
 import type { HttpClient } from "./http.ts";
+import { toStrictSchema } from "./strict-schema.ts";
 
 // ---------------------------------------------------------------------------
 // Responses API service
@@ -120,6 +121,16 @@ export const buildChatBody = (
   }
   if (options.maxOutputTokens) {
     body.max_output_tokens = options.maxOutputTokens;
+  }
+  if (options.format) {
+    // text.format is documented as text | json_object | json_schema; the
+    // json_schema dialect gets normalized to DeepSeek's strict subset.
+    body.text = {
+      format: options.format,
+      ...(options.format === "json_schema" && options.jsonSchema !== undefined
+        ? { json_schema: toStrictSchema(options.jsonSchema) }
+        : {}),
+    };
   }
   return body;
 };

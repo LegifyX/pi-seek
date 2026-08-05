@@ -10,7 +10,7 @@ export const BETA_URL = "https://api.deepseek.com/beta";
 export const API_KEY_ENV = "DEEPSEEK_API_KEY";
 const REQUEST_TIMEOUT_MS = 90_000;
 const TIMEOUT_MS_PER_TOKEN = 1; // 1ms per requested output token beyond the base
-const TIMEOUT_ENV = "DEEPSEEK_REQUEST_TIMEOUT_MS"; // seconds; absolute override
+const TIMEOUT_ENV = "DEEPSEEK_REQUEST_TIMEOUT_S"; // seconds; absolute override
 
 export const resolveTimeoutMs = (body: unknown): number => {
   const envValue = Number(process.env[TIMEOUT_ENV]);
@@ -93,20 +93,35 @@ export const COST = {
   output: 0.28,
 };
 
-// deepseek-v4-flash clamps xhigh to high. Keep unsupported values out of the
-// request payload.
+// Maps pi thinking levels (off/minimal/low/medium/high/xhigh/max) to the
+// DeepSeek Responses reasoning-effort values documented in docs/research/
+// deepseek-api-surface-2026-08-04.md (none, minimal, low, medium, high,
+// xhigh, max). Every documented level is exposed; none are silently clamped
+// away. pi documents xhigh mapping to DeepSeek's max effort for V4 Flash
+// (pi CHANGELOG #3944), so xhigh resolves to "max".
 export const THINKING_LEVEL_MAP = {
   high: "high",
   low: "low",
   max: "max",
-  medium: "high",
-  minimal: "low",
+  medium: "medium",
+  minimal: "minimal",
   off: "none",
-  xhigh: "high",
+  xhigh: "max",
 } as const;
 
 export type JsonObject = Record<string, unknown>;
-export type Effort = "low" | "high" | "max";
+// DeepSeek Responses documents reasoning effort as none, minimal, low,
+// medium, high, xhigh, or max (docs/research/deepseek-api-surface-2026-08-04).
+export type Effort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+// Structured-output formats documented for Responses text.format.
+export type ResponseFormat = "text" | "json_object" | "json_schema";
 export type DeepSeekMenuAction =
   | "toggle"
   | "effort"
@@ -253,6 +268,8 @@ export interface Thread {
 
 export interface ResponseChatOptions {
   effort?: Effort;
+  format?: ResponseFormat;
+  jsonSchema?: unknown;
   maxOutputTokens?: number;
   signal?: AbortSignal;
   system?: string;

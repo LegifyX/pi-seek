@@ -24,6 +24,8 @@ const WRONG_FUNCTION_RE =
   /called "other_fn" instead of required function "lookup"/;
 const MISSING_ARGUMENTS_RE =
   /returned no arguments for required function "lookup"/;
+const INVALID_FUNCTION_NAME_RE =
+  /Invalid function name ".*" for ds_call_function: names must be nonempty, alphanumeric\/underscore\/hyphen, and at most 128 characters/;
 
 // ---------------------------------------------------------------------------
 // Pure validator coverage
@@ -227,14 +229,16 @@ const createFunctionHarness = () => {
     },
   } as unknown as ExtensionAPI;
 
-  const betaBehaviors: Array<() => JsonObject> = [];
+  const betaBehaviors: Array<
+    (signal?: AbortSignal) => JsonObject | Promise<JsonObject>
+  > = [];
   const beta: BetaApi = {
-    postChatCompletion: async () => {
+    postChatCompletion: async (_body, signal) => {
       const behavior = betaBehaviors.shift();
       if (!behavior) {
         throw new Error("unexpected extra postChatCompletion call");
       }
-      return await behavior();
+      return await behavior(signal);
     },
     postCompletion: () =>
       Promise.reject(new Error("unused in validate-arguments tests")),
@@ -378,6 +382,105 @@ test("a different function name is rejected", async () => {
       assert.match(error.message, WRONG_FUNCTION_RE);
       return true;
     }
+  );
+});
+
+test("invalid function names are rejected before any network call", async () => {
+  const { betaBehaviors, execute } = createFunctionHarness();
+  const invalidNames = [
+    "bad name!",
+    "",
+    "lookup.fn",
+    "Ünïcode",
+    "x".repeat(129),
+  ];
+  const results = await Promise.all(
+    invalidNames.map(async (name) => {
+      try {
+        await execute({ name, parameters: Type.Object({}) });
+        return { error: undefined, name };
+      } catch (error) {
+        return { error, name };
+      }
+    })
+  );
+  for (const { error, name } of results) {
+    assert.ok(
+      error instanceof Error,
+      `name "${name}" must be rejected before any network call`
+    );
+    assert.match(error.message, INVALID_FUNCTION_NAME_RE);
+  }
+  assert.deepEqual(
+    betaBehaviors,
+    [],
+    "invalid names must be rejected before any network call"
+  );
+});
+
+// Mirrors a fetch that stays pending until the caller aborts: rejects with the
+// http-level abort marker "Aborted by user" when the signal fires.
+const abortDuringRequest = (signal?: AbortSignal): Promise<JsonObject> =>
+  new Promise((_resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Aborted by user"));
+      return;
+    }
+    signal?.addEventListener(
+      "abort",
+      () => reject(new Error("Aborted by user")),
+      { once: true }
+    );
+  });
+
+const interruptedResult = (result: unknown): Record<string, unknown> => {
+  const raw = result as {
+    content?: Array<{ text?: string }>;
+    details?: Record<string, unknown>;
+  };
+  assert.ok(raw.content, "expected a content array in the tool result");
+  assert.ok(raw.details, "expected details in the tool result");
+  return { content: raw.content, ...raw.details };
+};
+
+test("ds_call_function converts an abort during the request into an interrupted result", async () => {
+  const { betaBehaviors, execute } = createFunctionHarness();
+  const controller = new AbortController();
+  betaBehaviors.push(abortDuringRequest);
+  setTimeout(() => controller.abort(), 10);
+  const result = interruptedResult(
+    await execute(
+      { name: "lookup", parameters: Type.Object({}) },
+      controller.signal
+    )
+  );
+  assert.equal(result.interrupted, true);
+  assert.equal(result.phase, "request");
+  assert.equal(
+    (result.content as Array<{ text?: string }>)[0]?.text,
+    "Interrupted by the caller."
+  );
+});
+
+test("ds_call_function converts an abort during the backoff wait into an interrupted result", async () => {
+  const { betaBehaviors, execute } = createFunctionHarness();
+  const controller = new AbortController();
+  betaBehaviors.push(() => {
+    throw new Error("DeepSeek API 503: overloaded");
+  });
+  // Fires while the first ~200ms backoff is still running.
+  setTimeout(() => controller.abort(), 20);
+  const result = interruptedResult(
+    await execute(
+      { name: "lookup", parameters: Type.Object({}) },
+      controller.signal
+    )
+  );
+  assert.equal(result.interrupted, true);
+  assert.equal(result.phase, "retry_wait");
+  assert.equal(
+    (result.content as Array<{ text?: string }>)[0]?.text,
+    "Interrupted by the caller."
   );
 });
 

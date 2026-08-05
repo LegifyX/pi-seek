@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import type { BalanceStore } from "../src/balance.ts";
 import type { BetaApi } from "../src/beta.ts";
 import type { ResponsesResult } from "../src/config.ts";
@@ -16,7 +17,7 @@ import { registerTools, type ToolServices } from "../src/tools.ts";
 // orchestration (trim-and-retry, retries, request/retry_wait interruption
 // phases). This file pins the same retry contract onto the remaining fetch
 // tools that previously called their adapters directly: ds_prefix_complete,
-// ds_fim, and ds_web_search.
+// ds_fim, ds_web_search, and ds_call_function.
 
 type ChatBehavior = (signal?: AbortSignal) => JsonObject | Promise<JsonObject>;
 type SearchBehavior = (
@@ -66,6 +67,26 @@ const searchResult = (text = "answer"): ResponsesResult => ({
   usage: {},
 });
 
+const functionResponse = (): JsonObject => ({
+  choices: [
+    {
+      index: 0,
+      message: {
+        content: null,
+        role: "assistant",
+        tool_calls: [
+          {
+            function: { arguments: '{"key":"v"}', name: "lookup" },
+            id: "call_1",
+            type: "function",
+          },
+        ],
+      },
+    },
+  ],
+  usage: {},
+});
+
 const createHarness = () => {
   const runtimeState = createRuntimeState();
   const telemetry = createTelemetryStore(runtimeState);
@@ -81,6 +102,7 @@ const createHarness = () => {
   const fimBehaviors: ChatBehavior[] = [];
   const searchBehaviors: SearchBehavior[] = [];
   const queues: Record<string, unknown[]> = {
+    ds_call_function: betaBehaviors,
     ds_fim: fimBehaviors,
     ds_prefix_complete: betaBehaviors,
     ds_web_search: searchBehaviors,
@@ -188,6 +210,17 @@ const TOOLS = [
     params: { query: "deepseek v4 flash" },
     respond: () => searchResult(),
     text: "answer",
+  },
+  {
+    name: "ds_call_function",
+    params: {
+      name: "lookup",
+      parameters: Type.Object({ key: Type.String() }),
+    },
+    respond: () => functionResponse(),
+    // ds_call_function appends a retry note to its content (unlike the other
+    // tools), so the expected text carries the note for the retried cases.
+    text: 'Function call: lookup\nArguments: {\n  "key": "v"\n}\n\n[note: retried 1x]',
   },
 ];
 

@@ -6,12 +6,43 @@ import { MAX_OUTPUT_TOKENS } from "./config.ts";
 // ---------------------------------------------------------------------------
 
 const EffortParam = Type.Optional(
-  Type.Union([Type.Literal("low"), Type.Literal("high"), Type.Literal("max")], {
-    description: "Reasoning effort for this call",
-  })
+  Type.Union(
+    [
+      Type.Literal("none"),
+      Type.Literal("minimal"),
+      Type.Literal("low"),
+      Type.Literal("medium"),
+      Type.Literal("high"),
+      Type.Literal("xhigh"),
+      Type.Literal("max"),
+    ],
+    {
+      description:
+        "Reasoning effort for this call (documented Responses values: none, minimal, low, medium, high, xhigh, max)",
+    }
+  )
 );
 
 export const ChatParams = Type.Object({
+  format: Type.Optional(
+    Type.Union(
+      [
+        Type.Literal("text"),
+        Type.Literal("json_object"),
+        Type.Literal("json_schema"),
+      ],
+      {
+        description:
+          "Structured-output format for the reply (text, json_object, or json_schema)",
+      }
+    )
+  ),
+  json_schema: Type.Optional(
+    Type.Any({
+      description:
+        "JSON schema for json_schema output; normalized to DeepSeek's strict-mode dialect",
+    })
+  ),
   max_output_tokens: Type.Optional(
     Type.Integer({
       description: "Maximum output tokens for this round",
@@ -95,7 +126,11 @@ export const CallFunctionParams = Type.Object({
     Type.String({ description: "What the function does" })
   ),
   name: Type.String({
-    description: "Name of the function the model should call",
+    description:
+      "Name of the function the model should call. Must be nonempty, alphanumeric/underscore/hyphen, and at most 128 characters.",
+    maxLength: 128,
+    minLength: 1,
+    pattern: "^[a-zA-Z0-9_-]+$",
   }),
   parameters: Type.Any({
     description:

@@ -23,7 +23,9 @@ below; both are documented in the "API key" section.
 3. **No `npm install` is required in this repo.** The extension imports
 `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, and `typebox`,
 which pi's extension loader (via jiti) resolves from the pi installation
-itself; `package.json` carries devDependencies only.
+itself. Per `docs/packages.md` ("Dependencies"), those core packages are
+declared as `peerDependencies` with a `"*"` range and are not bundled;
+`package.json` keeps pinned `devDependencies` as the build-time contract.
 
 The API key can come from either location:
 
@@ -46,7 +48,7 @@ table below.
 
 | Piece | Notes |
 |---|---|
-| `deepseek-responses` provider (`deepseek-v4-flash`) |  `api: "openai-responses"`, base `https://api.deepseek.com`, apiKey `$DEEPSEEK_API_KEY`, thinking levels `off→none, minimal/low→low, medium/high→high, xhigh→high (clamped), max→max`, contextWindow 1,048,576, maxTokens 393,216, cost input 0.14 / output 0.28 / cacheRead 0.0028 / cacheWrite 0 (per 1M, from the pricing page) |
+| `deepseek-responses` provider (`deepseek-v4-flash`) |  `api: "openai-responses"`, base `https://api.deepseek.com`, apiKey `$DEEPSEEK_API_KEY`, thinking levels `off→none, minimal→minimal, low→low, medium→medium, high→high, xhigh→max, max→max`, contextWindow 1,048,576, maxTokens 393,216, cost input 0.14 / output 0.28 / cacheRead 0.0028 / cacheWrite 0 (per 1M, from the pricing page) |
 | `before_provider_request` guard |  Strips `temperature`/`top_p` while thinking mode is on (the default); the Responses API ignores them in thinking mode but payloads stay clean |
 | `ds_chat` / `ds_chat_reset` |  Named, stateful threads. The DeepSeek Responses API is stateless (`previous_response_id` unsupported), so each round replays history — bounded to the last 200 items / 600k chars (oldest first; latest user message always kept). State persists in tool-result `details`, restored from the session branch |
 | `ds_prefix_complete` |  Beta `https://api.deepseek.com/beta/chat/completions`, assistant `prefix: true` message + `stop` |
@@ -102,8 +104,11 @@ back on every subsequent request or the API returns 400. The runtime's
 responses provider handles this natively: `openai-responses-shared.ts` stores
 each reasoning item (`thinkingSignature`) and replays the full `reasoning` item
 on the next request. Verified against `pi@0.83.0` — no extension-layer fix
-needed; the compat flag `requiresReasoningContentOnAssistantMessages` is set on
-the model as documentation of the rule.
+needed. The rule is documented here rather than shipped as an inert compat
+flag: `requiresReasoningContentOnAssistantMessages` belongs to the Chat
+Completions compat contract (`OpenAICompletionsCompat`) and is never read by
+the openai-responses adapter, so the registered model's compat only carries
+`OpenAIResponsesCompat` fields.
 
 ## API key
 
@@ -159,7 +164,7 @@ returns 400; the runtime's responses provider replays it natively. See
 - **`DeepSeek request timed out`** — the request timeout scales with the
 requested token budget: 90s base + 1ms per token (`max_output_tokens` on
 Responses requests, `max_tokens` on beta requests)
-(`src/config.ts:15`). Set `DEEPSEEK_REQUEST_TIMEOUT_MS` (seconds) for an
+(`src/config.ts:15`). Set `DEEPSEEK_REQUEST_TIMEOUT_S` (seconds) for an
 absolute override (`src/config.ts:13`). Timeouts are retryable, so the five
 fetch tools retry them up to 4 times with backoff.
 - **`[note: retried 2x]` in a tool reply** — transient failures (429/5xx/

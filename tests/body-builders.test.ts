@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { Type } from "typebox";
 import { __test } from "../src/index.ts";
 
 const { buildChatBody, buildFimBody, buildPrefixBody, buildWebSearchBody } =
@@ -47,6 +48,67 @@ test("chat body with system only adds instructions, no max_output_tokens", () =>
     reasoning: { effort: "high" },
     stream: false,
   });
+});
+
+test("chat body with format json_object sets text.format", () => {
+  assert.deepStrictEqual(buildChatBody(INPUT, { format: "json_object" }), {
+    input: INPUT,
+    model: "deepseek-v4-flash",
+    reasoning: { effort: "high" },
+    stream: false,
+    text: { format: "json_object" },
+  });
+});
+
+test("chat body with format json_schema normalizes the schema into text", () => {
+  assert.deepStrictEqual(
+    buildChatBody(INPUT, {
+      format: "json_schema",
+      jsonSchema: Type.Object({ name: Type.String() }),
+    }),
+    {
+      input: INPUT,
+      model: "deepseek-v4-flash",
+      reasoning: { effort: "high" },
+      stream: false,
+      text: {
+        format: "json_schema",
+        json_schema: {
+          additionalProperties: false,
+          properties: { name: { type: "string" } },
+          required: ["name"],
+          type: "object",
+        },
+      },
+    }
+  );
+});
+
+test("chat body with format text emits the explicit text format", () => {
+  assert.deepStrictEqual(buildChatBody(INPUT, { format: "text" }), {
+    input: INPUT,
+    model: "deepseek-v4-flash",
+    reasoning: { effort: "high" },
+    stream: false,
+    text: { format: "text" },
+  });
+});
+
+test("chat body passes every documented reasoning effort through verbatim", () => {
+  const efforts = [
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ] as const;
+  for (const effort of efforts) {
+    assert.deepStrictEqual(buildChatBody(INPUT, { effort }).reasoning, {
+      effort,
+    });
+  }
 });
 
 test("webSearch body defaults the effort to low", () => {

@@ -117,13 +117,50 @@ test("every stream ends with a terminal event", () => {
   }
 });
 
-test("every stream carries keep-alive comments", () => {
-  for (const stream of allResponsesStreams) {
-    const hasKeepAlive = stream.lines.some(
+test("keep-alive comments are optional: fixtures cover streams with and without them", () => {
+  const withKeepAlive = allResponsesStreams.filter((stream) =>
+    stream.lines.some(
       (line) => line.kind === "comment" && line.text === KEEP_ALIVE_COMMENT
-    );
-    assert.ok(hasKeepAlive, `${stream.name}: missing ${KEEP_ALIVE_COMMENT}`);
-  }
+    )
+  );
+  const withoutKeepAlive = allResponsesStreams.filter(
+    (stream) =>
+      !stream.lines.some(
+        (line) => line.kind === "comment" && line.text === KEEP_ALIVE_COMMENT
+      )
+  );
+  // Streaming requests "may" receive keep-alives (research doc), and the
+  // live probe observed a stream with none, so both shapes must be fixtures.
+  assert.ok(
+    withKeepAlive.length > 0,
+    "at least one stream should carry keep-alive comments"
+  );
+  assert.ok(
+    withoutKeepAlive.length > 0,
+    "at least one stream should omit keep-alive comments"
+  );
+});
+
+test("keep-alive comments are ignorable on the wire", () => {
+  const kept = allResponsesStreams.find((stream) =>
+    stream.lines.some(
+      (line) => line.kind === "comment" && line.text === KEEP_ALIVE_COMMENT
+    )
+  );
+  assert.ok(kept, "expected a stream carrying keep-alive comments");
+  const serialized = serializeResponsesStream(kept);
+  assert.ok(
+    serialized.includes(KEEP_ALIVE_COMMENT),
+    "keep-alive comment should pass through serialization verbatim"
+  );
+  // Comment lines never render as `event:`/`data:` pairs, so an SSE reader
+  // that ignores them still sees the full event sequence.
+  assert.equal(
+    serialized.filter(
+      (line) => line.startsWith("event: ") || line.startsWith("data: ")
+    ).length,
+    eventsOf(kept).length * 2
+  );
 });
 
 test("no fixture serializes to SSE text containing the [DONE] marker", () => {

@@ -17,7 +17,7 @@ Six tools (`ds_chat`, `ds_chat_reset`, `ds_prefix_complete`, `ds_fim`, `ds_web_s
 
 ## Gate: enabled + retries
 
-Every tool checks the integration gate first: while disabled, all six return "DeepSeek integration is disabled. Run /deepseek to enable it." with `details.disabled: true` — on that result, ask the user to run `/deepseek` and toggle it on. Retries are selective: `ds_chat` and `ds_call_function` retry transient failures (429, 5xx, network, timeout) with capped backoff, at most 4 retries, surfaced as `details.retries` and a bounded `[note: retried Nx]` text suffix; `ds_prefix_complete`, `ds_fim`, and `ds_web_search` make a single direct call, so a transient failure there throws the underlying API error — no retry, no note. A thrown non-transient error means the call itself was wrong — fix the inputs.
+Every tool checks the integration gate first: while disabled, all six return "DeepSeek integration is disabled. Run /deepseek to enable it." with `details.disabled: true` — on that result, ask the user to run `/deepseek` and toggle it on. All five fetch tools (`ds_chat`, `ds_prefix_complete`, `ds_fim`, `ds_web_search`, `ds_call_function`) retry transient failures (429, 5xx, network, timeout) through `withRetries` with capped exponential backoff, at most 4 retries; `ds_chat_reset` makes no network call. Retry counts surface as `details.retries` on every fetch tool; `ds_chat` and `ds_call_function` additionally append a bounded `[note: retried Nx]` text suffix. An aborted request — mid-call or while waiting between retries — returns "Interrupted by the caller." with `details.interrupted` instead of throwing. A thrown non-transient error means the call itself was wrong — fix the inputs.
 
 ## Branch map
 

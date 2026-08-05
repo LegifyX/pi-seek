@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolveTimeoutMs } from "../src/index.ts";
 
-const TIMEOUT_ENV = "DEEPSEEK_REQUEST_TIMEOUT_MS";
+const TIMEOUT_ENV = "DEEPSEEK_REQUEST_TIMEOUT_S";
 
 test("resolveTimeoutMs uses the base timeout without a body", () => {
   assert.equal(resolveTimeoutMs(undefined), 90_000);

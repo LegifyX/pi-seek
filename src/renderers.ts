@@ -23,7 +23,7 @@ export const registerRenderers = (pi: ExtensionAPI): void => {
     thinking?: string;
     usage?: UsageRecord;
     ts: number;
-  }>(THREADS_ENTRY, (entry, _options, theme) => {
+  }>(THREADS_ENTRY, (entry, { expanded }, theme) => {
     const { data } = entry;
     const box = createEntryBox(theme);
     if (!data) {
@@ -34,7 +34,7 @@ export const registerRenderers = (pi: ExtensionAPI): void => {
     );
     box.addChild(new Text("", 0, 0));
     box.addChild(new Text(data.reply, 0, 0));
-    if (data.usage) {
+    if (expanded && data.usage) {
       box.addChild(
         new Text(
           theme.fg(
@@ -53,7 +53,7 @@ export const registerRenderers = (pi: ExtensionAPI): void => {
     usage: UsageRecord;
     history: UsageRecord[];
     ts: number;
-  }>(CACHE_CARD_ENTRY, (entry, _options, theme) => {
+  }>(CACHE_CARD_ENTRY, (entry, { expanded }, theme) => {
     const { data } = entry;
     const box = createEntryBox(theme);
     if (!data) {
@@ -74,44 +74,47 @@ export const registerRenderers = (pi: ExtensionAPI): void => {
         0
       )
     );
-    box.addChild(
-      new Text(
-        `cost input $${usage.cost.input.toFixed(5)} · output $${usage.cost.output.toFixed(5)} · cacheRead $${usage.cost.cacheRead.toFixed(6)} · total $${usage.cost.total.toFixed(5)}`,
-        0,
-        0
-      )
-    );
-    box.addChild(
-      new Text(
-        theme.fg(
-          "muted",
-          `source: ${usage.source} · model: ${usage.model} · ${new Date(usage.ts).toLocaleTimeString()}`
-        ),
-        0,
-        0
-      )
-    );
-
-    if (history.length > 1) {
-      const totalCacheRead = history.reduce(
-        (sum, record) => sum + record.cacheRead,
-        0
+    if (expanded) {
+      box.addChild(
+        new Text(
+          `cost input $${usage.cost.input.toFixed(5)} · output $${usage.cost.output.toFixed(5)} · cacheRead $${usage.cost.cacheRead.toFixed(6)} · total $${usage.cost.total.toFixed(5)}`,
+          0,
+          0
+        )
       );
-      const totalInput = history.reduce(
-        (sum, record) => sum + record.cacheRead + record.input,
-        0
-      );
-      const aggregateHitRate = (totalCacheRead / Math.max(1, totalInput)) * 100;
       box.addChild(
         new Text(
           theme.fg(
             "muted",
-            `${history.length} requests this session · aggregate hit rate ${aggregateHitRate.toFixed(1)}%`
+            `source: ${usage.source} · model: ${usage.model} · ${new Date(usage.ts).toLocaleTimeString()}`
           ),
           0,
           0
         )
       );
+
+      if (history.length > 1) {
+        const totalCacheRead = history.reduce(
+          (sum, record) => sum + record.cacheRead,
+          0
+        );
+        const totalInput = history.reduce(
+          (sum, record) => sum + record.cacheRead + record.input,
+          0
+        );
+        const aggregateHitRate =
+          (totalCacheRead / Math.max(1, totalInput)) * 100;
+        box.addChild(
+          new Text(
+            theme.fg(
+              "muted",
+              `${history.length} requests this session · aggregate hit rate ${aggregateHitRate.toFixed(1)}%`
+            ),
+            0,
+            0
+          )
+        );
+      }
     }
     return box;
   });
@@ -128,7 +131,7 @@ export const registerRenderers = (pi: ExtensionAPI): void => {
     toppedUpBalance: number;
     totalBalance: number;
     ts: number;
-  }>(BALANCE_ENTRY, (entry, _options, theme) => {
+  }>(BALANCE_ENTRY, (entry, { expanded }, theme) => {
     const { data } = entry;
     const box = createEntryBox(theme);
     if (!data) {
@@ -145,40 +148,42 @@ export const registerRenderers = (pi: ExtensionAPI): void => {
         0
       )
     );
-    if (data.grantedBalance > 0 || data.toppedUpBalance > 0) {
+    if (expanded) {
+      if (data.grantedBalance > 0 || data.toppedUpBalance > 0) {
+        box.addChild(
+          new Text(
+            theme.fg(
+              "muted",
+              `granted ${symbol}${data.grantedBalance.toFixed(2)} · topped up ${symbol}${data.toppedUpBalance.toFixed(2)}`
+            ),
+            0,
+            0
+          )
+        );
+      }
+      if (data.sessionCalls > 0) {
+        box.addChild(
+          new Text(
+            theme.fg(
+              "muted",
+              `usage today ${data.todayCalls} calls · $${data.todayCostTotal.toFixed(4)} · session ${data.sessionCalls} calls · $${data.sessionCostTotal.toFixed(4)} (est.)`
+            ),
+            0,
+            0
+          )
+        );
+      }
       box.addChild(
         new Text(
           theme.fg(
             "muted",
-            `granted ${symbol}${data.grantedBalance.toFixed(2)} · topped up ${symbol}${data.toppedUpBalance.toFixed(2)}`
+            `updated ${new Date(data.fetchedAt).toLocaleTimeString()}`
           ),
           0,
           0
         )
       );
     }
-    if (data.sessionCalls > 0) {
-      box.addChild(
-        new Text(
-          theme.fg(
-            "muted",
-            `usage today ${data.todayCalls} calls · $${data.todayCostTotal.toFixed(4)} · session ${data.sessionCalls} calls · $${data.sessionCostTotal.toFixed(4)} (est.)`
-          ),
-          0,
-          0
-        )
-      );
-    }
-    box.addChild(
-      new Text(
-        theme.fg(
-          "muted",
-          `updated ${new Date(data.fetchedAt).toLocaleTimeString()}`
-        ),
-        0,
-        0
-      )
-    );
     return box;
   });
 };

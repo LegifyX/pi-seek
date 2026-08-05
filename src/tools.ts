@@ -120,6 +120,19 @@ const isCallerAbort = (error: unknown): boolean =>
   error instanceof RetryWaitAbortedError ||
   (error instanceof Error && error.message === "Aborted by user");
 
+// DeepSeek documents function names as unique, nonempty, alphanumeric/
+// underscore/hyphen, and at most 128 characters (Create response verified
+// constraints; shared Tool calls guide). Reject invalid names locally with a
+// typed error before any network call.
+const FUNCTION_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const validateFunctionName = (name: string): void => {
+  if (name.length > 128 || !FUNCTION_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `Invalid function name "${name}" for ds_call_function: names must be nonempty, alphanumeric/underscore/hyphen, and at most 128 characters`
+    );
+  }
+};
+
 const interruptedPhase = (error: unknown): "request" | "retry_wait" =>
   error instanceof RetryWaitAbortedError ? "retry_wait" : "request";
 
@@ -195,16 +208,19 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
 
   pi.registerTool({
     description:
-      "Send a message to DeepSeek V4 Flash in a named conversation thread and get the reply. Threads are stateful across calls and keep the history, so DeepSeek can be run as a sub-agent. Replay is bounded (the last 200 items / 600k chars; oldest first) and transient failures retry with backoff; a context-length failure trims the replay once and retries. Use ds_chat_reset to clear a thread.",
+      "Send a message to DeepSeek V4 Flash in a named conversation thread and get the reply. Threads are stateful across calls and keep the history, so DeepSeek can be run as a sub-agent. Replay is bounded (the last 200 items / 600k chars; oldest first) and transient failures retry with backoff; a context-length failure trims the replay once and retries. Use ds_chat_reset to clear a thread. Reasoning effort accepts none, minimal, low, medium, high, xhigh, or max; structured output is available via format (text, json_object, json_schema) plus an optional json_schema.",
     async execute(_toolCallId, params, signal, _onUpdate, context) {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
       }
       return await threads.withLock(params.thread, async () => {
         const thread = threads.getOrCreate(params.thread);
-        if (params.system && thread.round === 0) {
-          thread.system = params.system;
-        }
+        // Stage the first-round system prompt instead of mutating the stored
+        // thread up front: commit it only after the request succeeds, so a
+        // caller interrupt leaves thread.system/items/round untouched and the
+        // restored thread matches the live store.
+        const stagedSystem =
+          params.system && thread.round === 0 ? params.system : thread.system;
 
         const inputItems = [...thread.items, buildUserMessage(params.message)];
 
@@ -214,15 +230,18 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
 
         const outcome = await runChatWithRecovery(responses, capped.items, {
           effort: params.reasoning_effort,
+          format: params.format,
+          jsonSchema: params.json_schema,
           maxOutputTokens: params.max_output_tokens,
           signal: signal ?? context.signal,
-          system: resolveInstructions(thread),
+          system: resolveInstructions({ ...thread, system: stagedSystem }),
         });
 
         if (outcome.interrupted) {
           return createInterruptedResult(outcome.phase);
         }
 
+        thread.system = stagedSystem;
         const usage = telemetry.mapResponsesUsage(outcome.result.usage, "chat");
         const persistedItems = outcome.result.items.filter(isPersistableItem);
         thread.items = trimThreadItems([
@@ -421,7 +440,7 @@ const registerResponsesTools = (
 
   pi.registerTool({
     description:
-      "Run DeepSeek's server-side web search (Responses API web_search tool) for a query and return the model's answer, including citations where available.",
+      "Run DeepSeek's server-side web search (Responses API web_search tool) for a query and return the model's answer, including citations where available. Reasoning effort accepts none, minimal, low, medium, high, xhigh, or max.",
     async execute(_toolCallId, params, signal, _onUpdate, context) {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
@@ -515,6 +534,7 @@ const registerFunctionTool = (
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
       }
+      validateFunctionName(params.name);
       const strictParameters = toStrictSchema(params.parameters);
       const body: JsonObject = {
         messages: [
@@ -548,62 +568,69 @@ const registerFunctionTool = (
       };
 
       const requestSignal = signal ?? context.signal;
-      const outcome = await withRetries(
-        () => beta.postChatCompletion(body, requestSignal),
-        { maxRetries: MAX_RETRIES, signal: requestSignal }
-      );
-      const response = outcome.result;
-      const message = getObject(getFirstChoice(response), "message");
-      const usage = telemetry.mapChatUsage(response.usage, "function");
-      pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-      telemetry.setFooter(context);
-
-      const { calledName, rawArguments } = extractRequiredFunctionCall(
-        message ?? {},
-        params.name
-      );
-
-      let parsedArguments: unknown;
       try {
-        parsedArguments = JSON.parse(rawArguments);
-      } catch (error) {
-        throw new Error(
-          `DeepSeek returned invalid JSON arguments for required function "${params.name}"`,
-          { cause: error }
+        const outcome = await withRetries(
+          () => beta.postChatCompletion(body, requestSignal),
+          { maxRetries: MAX_RETRIES, signal: requestSignal }
         );
-      }
+        const response = outcome.result;
+        const message = getObject(getFirstChoice(response), "message");
+        const usage = telemetry.mapChatUsage(response.usage, "function");
+        pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
+        telemetry.setFooter(context);
 
-      const validationFailures = validateStrictArguments(
-        strictParameters,
-        parsedArguments
-      );
-      if (validationFailures.length > 0) {
-        throw new Error(
-          `DeepSeek returned schema-invalid arguments for required function "${params.name}": ${validationFailures.slice(0, 3).join("; ")}`
+        const { calledName, rawArguments } = extractRequiredFunctionCall(
+          message ?? {},
+          params.name
         );
-      }
 
-      const callText = `Function call: ${calledName}\nArguments: ${JSON.stringify(parsedArguments, null, 2)}`;
-      return {
-        content: [
-          {
-            text:
-              outcome.retries > 0
-                ? `${callText}\n\n[note: retried ${outcome.retries}x]`
-                : callText,
-            type: "text" as const,
+        let parsedArguments: unknown;
+        try {
+          parsedArguments = JSON.parse(rawArguments);
+        } catch (error) {
+          throw new Error(
+            `DeepSeek returned invalid JSON arguments for required function "${params.name}"`,
+            { cause: error }
+          );
+        }
+
+        const validationFailures = validateStrictArguments(
+          strictParameters,
+          parsedArguments
+        );
+        if (validationFailures.length > 0) {
+          throw new Error(
+            `DeepSeek returned schema-invalid arguments for required function "${params.name}": ${validationFailures.slice(0, 3).join("; ")}`
+          );
+        }
+
+        const callText = `Function call: ${calledName}\nArguments: ${JSON.stringify(parsedArguments, null, 2)}`;
+        return {
+          content: [
+            {
+              text:
+                outcome.retries > 0
+                  ? `${callText}\n\n[note: retried ${outcome.retries}x]`
+                  : callText,
+              type: "text" as const,
+            },
+          ],
+          details: {
+            ...(outcome.retries > 0 ? { retries: outcome.retries } : {}),
+            arguments: parsedArguments,
+            name: calledName,
+            rawArguments,
+            reasoning: getString(message, "reasoning_content"),
+            strictSchema: strictParameters,
+            usage,
           },
-        ],
-        details: {
-          ...(outcome.retries > 0 ? { retries: outcome.retries } : {}),
-          arguments: parsedArguments,
-          name: calledName,
-          rawArguments,
-          reasoning: getString(message, "reasoning_content"),
-          strictSchema: strictParameters,
-          usage,
-        },
-      };
+        };
+      } catch (error) {
+        if (isCallerAbort(error)) {
+          return createInterruptedResult(interruptedPhase(error));
+        }
+        throw error;
+      }
     },
     label: "DeepSeek Call Function",
     name: "ds_call_function",

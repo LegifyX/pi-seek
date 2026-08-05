@@ -1,9 +1,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { THINKING_LEVEL_MAP } from "../src/config.ts";
 import { __test } from "../src/index.ts";
 
 const strip = __test.stripUnsupportedThinkingParameters;
 const applyEffort = __test.applyDefaultReasoningEffort;
+
+test("THINKING_LEVEL_MAP maps every pi level to a documented Responses effort", () => {
+  // pi thinking levels (off/minimal/low/medium/high/xhigh/max) map to the
+  // DeepSeek Responses effort values documented in docs/research/
+  // deepseek-api-surface-2026-08-04.md; xhigh resolves to max per pi's own
+  // V4 Flash catalog (CHANGELOG #3944) instead of being clamped to high.
+  assert.deepEqual(THINKING_LEVEL_MAP, {
+    high: "high",
+    low: "low",
+    max: "max",
+    medium: "medium",
+    minimal: "minimal",
+    off: "none",
+    xhigh: "max",
+  });
+});
 
 test("stripUnsupportedThinkingParameters: thinking on removes the four sampling keys", () => {
   const payload = {
