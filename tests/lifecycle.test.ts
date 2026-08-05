@@ -5,6 +5,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import type { BalanceStore } from "../src/balance.ts";
 import {
   API_KEY_ENV,
   BASE_URL,
@@ -159,6 +160,7 @@ interface RecordingHandlers {
 }
 
 interface HandlerHarness {
+  balance?: BalanceStore;
   pi: RecordingHandlers;
   runtimeState: DeepSeekRuntimeState;
   telemetry: TelemetryStore;
@@ -180,7 +182,7 @@ const createRecordingHandlers = (): RecordingHandlers => {
   };
 };
 
-const createHandlerHarness = (): HandlerHarness => {
+const createHandlerHarness = (balance?: BalanceStore): HandlerHarness => {
   const pi = createRecordingHandlers();
   const runtimeState = createRuntimeState();
   const telemetry = createTelemetryStore(runtimeState);
@@ -189,9 +191,10 @@ const createHandlerHarness = (): HandlerHarness => {
     pi as unknown as ExtensionAPI,
     runtimeState,
     telemetry,
-    threads
+    threads,
+    balance
   );
-  return { pi, runtimeState, telemetry, threads };
+  return { balance, pi, runtimeState, telemetry, threads };
 };
 
 const createContext = (
@@ -220,6 +223,7 @@ const getHandler = (pi: RecordingHandlers, event: string): LifecycleHandler => {
 };
 
 const FOOTER_PATTERN = /DS v4-flash/;
+const BALANCE_SUFFIX_PATTERN = /balance \$5\.20/;
 
 const asObject = (value: unknown): Record<string, unknown> => {
   assert.ok(
@@ -436,6 +440,104 @@ test("model_select clears the footer for a non-DeepSeek model", () => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0].key, FOOTER_KEY);
   assert.equal(calls[0].value, undefined);
+});
+
+const settle = (): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, 0));
+
+const BALANCE_UNAVAILABLE_PATTERN = /balance unavailable/;
+
+const usableBalance = (
+  totalBalance: number,
+  isAvailable = true
+): BalanceStore => ({
+  get: () =>
+    Promise.resolve({
+      currency: "USD",
+      fetchedAt: Date.now(),
+      grantedBalance: 0,
+      isAvailable,
+      toppedUpBalance: 0,
+      totalBalance,
+    }),
+  peek: () => null,
+});
+
+test("footer appends the remaining balance when a balance store is provided", async () => {
+  const { pi, telemetry } = createHandlerHarness(usableBalance(5.2));
+  telemetry.record(recordedUsage);
+  const handler = getHandler(pi, "model_select");
+  const { calls, context } = createContext({
+    model: { provider: PROVIDER_ID },
+  });
+
+  handler(
+    {
+      model: {},
+      previousModel: undefined,
+      source: "set",
+      type: "model_select",
+    },
+    context
+  );
+  await settle();
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].key, FOOTER_KEY);
+  assert.match(calls[0].value ?? "", FOOTER_PATTERN);
+  assert.equal(calls[1].key, FOOTER_KEY);
+  assert.match(calls[1].value ?? "", BALANCE_SUFFIX_PATTERN);
+});
+
+test("footer shows 'balance unavailable' when the account reports no usable balance", async () => {
+  const { pi, telemetry } = createHandlerHarness(usableBalance(0, false));
+  telemetry.record(recordedUsage);
+  const handler = getHandler(pi, "model_select");
+  const { calls, context } = createContext({
+    model: { provider: PROVIDER_ID },
+  });
+
+  handler(
+    {
+      model: {},
+      previousModel: undefined,
+      source: "set",
+      type: "model_select",
+    },
+    context
+  );
+  await settle();
+
+  const last = calls.at(-1);
+  assert.equal(last?.key, FOOTER_KEY);
+  assert.match(last?.value ?? "", BALANCE_UNAVAILABLE_PATTERN);
+});
+
+test("footer keeps the base line when the balance fetch fails", async () => {
+  const balance: BalanceStore = {
+    get: () => Promise.reject(new Error("network down")),
+    peek: () => null,
+  };
+  const { pi, telemetry } = createHandlerHarness(balance);
+  telemetry.record(recordedUsage);
+  const handler = getHandler(pi, "model_select");
+  const { calls, context } = createContext({
+    model: { provider: PROVIDER_ID },
+  });
+
+  handler(
+    {
+      model: {},
+      previousModel: undefined,
+      source: "set",
+      type: "model_select",
+    },
+    context
+  );
+  await settle();
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].value ?? "", FOOTER_PATTERN);
 });
 
 // ---------------------------------------------------------------------------

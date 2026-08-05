@@ -1,6 +1,8 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { BalanceStore } from "./balance.ts";
 import {
   COST,
+  currencySymbol,
   type DeepSeekRuntimeState,
   FOOTER_KEY,
   getNumber,
@@ -26,7 +28,7 @@ export interface TelemetryStore {
   mapResponsesUsage: (usage: unknown, source: string) => PendingUsageRecord;
   record: (record: PendingUsageRecord) => UsageRecord;
   restore: (records: UsageRecord[]) => void;
-  setFooter: (context?: ExtensionContext) => void;
+  setFooter: (context?: ExtensionContext, balance?: BalanceStore) => void;
 }
 
 // Malformed usage fields (NaN/±Infinity) must never leak into produced
@@ -178,7 +180,10 @@ export const createTelemetryStore = (
     };
   };
 
-  const setFooter = (context?: ExtensionContext): void => {
+  const setFooter = (
+    context?: ExtensionContext,
+    balance?: BalanceStore
+  ): void => {
     if (!context) {
       return;
     }
@@ -192,10 +197,26 @@ export const createTelemetryStore = (
     }
     const cacheHit = (lastUsage.cacheRead / 1000).toFixed(1);
     const cacheMiss = (lastUsage.input / 1000).toFixed(1);
-    context.ui.setStatus(
-      FOOTER_KEY,
-      `DS v4-flash · cache ${cacheHit}K hit / ${cacheMiss}K miss · $${lastUsage.cost.total.toFixed(4)}`
-    );
+    const status = `DS v4-flash · cache ${cacheHit}K hit / ${cacheMiss}K miss · $${lastUsage.cost.total.toFixed(4)}`;
+    context.ui.setStatus(FOOTER_KEY, status);
+    if (!balance) {
+      return;
+    }
+    // Fire-and-forget balance refresh (TTL-cached, at most one GET per TTL):
+    // the base status line is set synchronously and the balance suffix lands
+    // when the fetch settles; a failed fetch keeps the base line.
+    balance
+      .get()
+      .then((state) => {
+        if (!runtimeState.enabled || context.model?.provider !== PROVIDER_ID) {
+          return;
+        }
+        const balanceLabel = state.isAvailable
+          ? `${currencySymbol(state.currency)}${state.totalBalance.toFixed(2)}`
+          : "unavailable";
+        context.ui.setStatus(FOOTER_KEY, `${status} · balance ${balanceLabel}`);
+      })
+      .catch(() => undefined);
   };
 
   return {

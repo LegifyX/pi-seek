@@ -209,10 +209,14 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
   pi.registerTool({
     description:
       "Send a message to DeepSeek V4 Flash in a named conversation thread and get the reply. Threads are stateful across calls and keep the history, so DeepSeek can be run as a sub-agent. Replay is bounded (the last 200 items / 600k chars; oldest first) and transient failures retry with backoff; a context-length failure trims the replay once and retries. Use ds_chat_reset to clear a thread. Reasoning effort accepts none, minimal, low, medium, high, xhigh, or max; structured output is available via format (text, json_object, json_schema) plus an optional json_schema.",
-    async execute(_toolCallId, params, signal, _onUpdate, context) {
+    async execute(_toolCallId, params, signal, onUpdate, context) {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
       }
+      onUpdate?.({
+        content: [{ text: "Sending to DeepSeek…", type: "text" as const }],
+        details: {},
+      });
       return await threads.withLock(params.thread, async () => {
         const thread = threads.getOrCreate(params.thread);
         // Stage the first-round system prompt instead of mutating the stored
@@ -250,7 +254,7 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
         ]).items;
         thread.round += 1;
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-        telemetry.setFooter(context);
+        telemetry.setFooter(context, services.balance);
 
         const reply =
           buildChatReply(
@@ -318,10 +322,19 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
   pi.registerTool({
     description:
       'Beta Chat Prefix Completion: give a user instruction plus an assistant prefix (e.g. "```python\\n") and get the model\'s continuation, optionally stopping at a sequence like "```". Use for code/structured completions.',
-    async execute(_toolCallId, params, signal, _onUpdate, context) {
+    async execute(_toolCallId, params, signal, onUpdate, context) {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
       }
+      onUpdate?.({
+        content: [
+          {
+            text: "Requesting DeepSeek prefix completion…",
+            type: "text" as const,
+          },
+        ],
+        details: {},
+      });
       const body = buildPrefixBody(params);
       const requestSignal = signal ?? context.signal;
 
@@ -335,7 +348,7 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
         const completion = getString(message, "content") ?? "";
         const usage = telemetry.mapChatUsage(response.usage, "prefix");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-        telemetry.setFooter(context);
+        telemetry.setFooter(context, services.balance);
         const rawUsage = isJsonObject(response.usage)
           ? response.usage
           : undefined;
@@ -377,10 +390,19 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
   pi.registerTool({
     description:
       "Beta Fill-In-the-Middle completion: give the code before the gap (prompt) and optionally the code after it (suffix); DeepSeek completes the middle. Max tokens is capped at 4K by the API.",
-    async execute(_toolCallId, params, signal, _onUpdate, context) {
+    async execute(_toolCallId, params, signal, onUpdate, context) {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
       }
+      onUpdate?.({
+        content: [
+          {
+            text: "Requesting DeepSeek FIM completion…",
+            type: "text" as const,
+          },
+        ],
+        details: {},
+      });
       const body = buildFimBody(params);
       const requestSignal = signal ?? context.signal;
 
@@ -393,7 +415,7 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
         const completion = getString(getFirstChoice(response), "text") ?? "";
         const usage = telemetry.mapChatUsage(response.usage, "fim");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-        telemetry.setFooter(context);
+        telemetry.setFooter(context, services.balance);
         const rawUsage = isJsonObject(response.usage)
           ? response.usage
           : undefined;
@@ -441,10 +463,16 @@ const registerResponsesTools = (
   pi.registerTool({
     description:
       "Run DeepSeek's server-side web search (Responses API web_search tool) for a query and return the model's answer, including citations where available. Reasoning effort accepts none, minimal, low, medium, high, xhigh, or max.",
-    async execute(_toolCallId, params, signal, _onUpdate, context) {
+    async execute(_toolCallId, params, signal, onUpdate, context) {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
       }
+      onUpdate?.({
+        content: [
+          { text: "Running DeepSeek web search…", type: "text" as const },
+        ],
+        details: {},
+      });
       const requestSignal = signal ?? context.signal;
 
       try {
@@ -461,7 +489,7 @@ const registerResponsesTools = (
         const { result } = outcome;
         const usage = telemetry.mapResponsesUsage(result.usage, "search");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-        telemetry.setFooter(context);
+        telemetry.setFooter(context, services.balance);
         return {
           content: [
             { text: result.text || "(no answer)", type: "text" as const },
@@ -530,10 +558,16 @@ const registerFunctionTool = (
   pi.registerTool({
     description:
       "Force DeepSeek V4 Flash to produce the named strict-mode function call for the given JSON schema. This helper uses non-thinking mode because DeepSeek rejects forced tool choice in thinking mode. The schema is normalized to DeepSeek's strict dialect (all object properties required, additionalProperties false, strings with supported pattern/format only, numbers with bounds/multipleOf, arrays without min/maxItems, enum/anyOf/$ref/$def). Returns the parsed arguments.",
-    async execute(_toolCallId, params, signal, _onUpdate, context) {
+    async execute(_toolCallId, params, signal, onUpdate, context) {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
       }
+      onUpdate?.({
+        content: [
+          { text: "Requesting DeepSeek function call…", type: "text" as const },
+        ],
+        details: {},
+      });
       validateFunctionName(params.name);
       const strictParameters = toStrictSchema(params.parameters);
       const body: JsonObject = {
@@ -577,7 +611,7 @@ const registerFunctionTool = (
         const message = getObject(getFirstChoice(response), "message");
         const usage = telemetry.mapChatUsage(response.usage, "function");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-        telemetry.setFooter(context);
+        telemetry.setFooter(context, services.balance);
 
         const { calledName, rawArguments } = extractRequiredFunctionCall(
           message ?? {},

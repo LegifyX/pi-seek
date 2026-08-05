@@ -10,6 +10,8 @@
 // ---------------------------------------------------------------------------
 
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { before, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { BalanceStore } from "../src/balance.ts";
@@ -27,6 +29,7 @@ import {
   createHttpClient,
   type HttpClient,
 } from "../src/http.ts";
+import { registerSkillDiscovery } from "../src/index.ts";
 import {
   registerLifecycleHandlers,
   registerProvider,
@@ -102,6 +105,7 @@ interface RecordingPi {
   commands: RegisteredCommand[];
   entries: RecordedEntry[];
   events: string[];
+  handlers: Map<string, unknown>;
   providers: RegisteredProvider[];
   renderers: RegisteredRenderer[];
   tools: Map<string, RegisteredTool>;
@@ -114,6 +118,7 @@ const createRecordingPi = (): { pi: ExtensionAPI; recording: RecordingPi } => {
   const commands: RegisteredCommand[] = [];
   const entries: RecordedEntry[] = [];
   const events: string[] = [];
+  const handlers = new Map<string, unknown>();
   const providers: RegisteredProvider[] = [];
   const renderers: RegisteredRenderer[] = [];
   const tools = new Map<string, RegisteredTool>();
@@ -122,8 +127,11 @@ const createRecordingPi = (): { pi: ExtensionAPI; recording: RecordingPi } => {
     appendEntry: (customType: string, data?: unknown): void => {
       entries.push({ customType, data });
     },
-    on: (event: string): void => {
+    on: (event: string, handler?: unknown): void => {
       events.push(event);
+      if (handler !== undefined) {
+        handlers.set(event, handler);
+      }
     },
     registerCommand: (
       name: string,
@@ -148,6 +156,7 @@ const createRecordingPi = (): { pi: ExtensionAPI; recording: RecordingPi } => {
       commands,
       entries,
       events,
+      handlers,
       providers,
       renderers,
       tools,
@@ -320,6 +329,8 @@ const asTextResult = (result: unknown): string => {
   return text;
 };
 
+const DEEPSEEK_PROGRESS_PATTERN = /DeepSeek/;
+
 const sortedNames = (names: string[]): string[] =>
   [...names].sort((a, b) => a.localeCompare(b));
 
@@ -386,6 +397,24 @@ test("registers the provider, six tools, four commands, and three renderers", ()
   }
 });
 
+test("resources_discover contributes the packaged skills directory", async () => {
+  const { pi, recording } = createRecordingPi();
+  registerSkillDiscovery(pi);
+
+  const handler = recording.handlers.get("resources_discover") as
+    | (() => Promise<{ skillPaths?: string[] }>)
+    | undefined;
+  assert.ok(handler, 'on("resources_discover") must be registered');
+  const result = await handler();
+  const [skillPath] = result.skillPaths ?? [];
+  assert.ok(skillPath, "skillPaths must contain the skills directory");
+  assert.ok(
+    skillPath.endsWith(`${path.sep}skills`) || skillPath.endsWith("/skills"),
+    `unexpected skill path: ${skillPath}`
+  );
+  assert.ok(existsSync(skillPath), `skills directory must exist: ${skillPath}`);
+});
+
 // ---------------------------------------------------------------------------
 // Request contract: ds_chat
 // ---------------------------------------------------------------------------
@@ -435,6 +464,37 @@ test("ds_chat posts to /responses with bearer auth, the model, and the input mes
   assert.ok(usageEntry, "ds_chat must append a usage entry");
   const usage = usageEntry.data as Pick<UsageRecord, "source">;
   assert.equal(usage.source, "chat");
+});
+
+test("ds_chat reports progress through onUpdate", async (t) => {
+  const { recording, transport } = createHarness();
+  transport.route(
+    "POST",
+    "https://api.deepseek.com/responses",
+    () => responsesChatCompleted
+  );
+  transport.install();
+  t.after(() => transport.uninstall());
+
+  const tool = recording.tools.get("ds_chat");
+  assert.ok(tool);
+  const updates: Array<{ content?: Array<{ text?: string }> }> = [];
+  await tool.execute(
+    "call_e2e",
+    { message: "progress", thread: "progress" },
+    undefined,
+    (partial: { content?: Array<{ text?: string }> }) => {
+      updates.push(partial);
+    },
+    {
+      model: undefined,
+      signal: undefined,
+      ui: { notify: () => undefined, setStatus: () => undefined },
+    }
+  );
+
+  assert.ok(updates.length >= 1, "onUpdate must be called at least once");
+  assert.match(updates[0]?.content?.[0]?.text ?? "", DEEPSEEK_PROGRESS_PATTERN);
 });
 
 test("ds_chat_reset clears a thread without any network call", async (t) => {

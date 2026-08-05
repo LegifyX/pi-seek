@@ -95,6 +95,8 @@ All six tool identifiers are plain snake_case, so Fabric reaches them directly i
 
 Discovery fallback: `tools.search({query: "deepseek"})` to find the tools, `tools.describe({ref: "extensions.<name>"})` for the full input schema, `tools.call({ref, args})` to invoke. Refs are namespaced — bare names are rejected.
 
+In full code mode Fabric hides captured extension tools from Pi's direct model registry, so the six tools are reachable only through `fabric_exec` (the `extensions.*` proxy or `tools.search`/`tools.call` above). Outside full code mode they appear as ordinary Pi tools.
+
 ## Diagnostics — user-run commands
 
 The four commands are typed by the user; recommend them rather than faking them:
@@ -108,3 +110,5 @@ The four commands are typed by the user; recommend them rather than faking them:
 - `/ds <prompt>` — one-shot chat, no thread.
 - `/ds-cache` — KV-cache hit/miss tokens and cost of the last request.
 - `/ds-balance` — remaining account balance plus usage today and this session (60s TTL, falls back to the cached value on fetch failure).
+
+The status line (footer) shows the remaining balance after DeepSeek usage — `DS v4-flash · cache … · $cost · balance $N` — refreshed at most every 60s; `balance unavailable` when the account reports no usable balance. Open `/ds-balance` for the full card.

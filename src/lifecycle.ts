@@ -2,7 +2,7 @@ import type {
   ExtensionAPI,
   TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
-import { collectUsageRecords } from "./balance.ts";
+import { type BalanceStore, collectUsageRecords } from "./balance.ts";
 import {
   API_KEY_ENV,
   BASE_URL,
@@ -102,7 +102,8 @@ export const registerLifecycleHandlers = (
   pi: ExtensionAPI,
   runtimeState: DeepSeekRuntimeState,
   telemetry: TelemetryStore,
-  threads: ThreadStore
+  threads: ThreadStore,
+  balance?: BalanceStore
 ): void => {
   pi.on("before_provider_request", (event) => {
     if (!runtimeState.enabled) {
@@ -143,11 +144,11 @@ export const registerLifecycleHandlers = (
         totalTokens: usage.totalTokens,
       })
     );
-    telemetry.setFooter(context);
+    telemetry.setFooter(context, balance);
   });
 
   pi.on("model_select", (_event, context) => {
-    telemetry.setFooter(context);
+    telemetry.setFooter(context, balance);
   });
   pi.on("session_start", (_event, context) => {
     threads.restore(context);
