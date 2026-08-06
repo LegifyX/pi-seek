@@ -30,9 +30,12 @@ const fgColors = {
   thinkingMax: 33,
   thinkingXhigh: 33,
 } as unknown as ConstructorParameters<typeof Theme>[0];
-const bgColors = { customMessageBg: 40 } as unknown as ConstructorParameters<
-  typeof Theme
->[1];
+// 0.84 Theme derives scrollbarThumb from selectedBg; a partial fixture must
+// include it or the constructor throws on the undefined fallback.
+const bgColors = {
+  customMessageBg: 40,
+  selectedBg: 41,
+} as unknown as ConstructorParameters<typeof Theme>[1];
 const theme = new Theme(fgColors, bgColors, "truecolor");
 
 const createRecordingPi = (): {
