@@ -1,55 +1,29 @@
 {
-  "keywords": [
-    "pi-package",
-    "pi-extension"
-  ],
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
-    "typebox": "*"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^2.5.3",
+  "keywords"        : ["pi-package", "pi-extension"],
+  "peerDependencies": {"@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*"},
+  "devDependencies" : {
+    "@biomejs/biome"                 : "^2.5.3",
     "@earendil-works/pi-coding-agent": "0.84.0",
-    "@earendil-works/pi-tui": "0.84.0",
-    "@types/node": "^22",
-    "typebox": "1.3.7",
-    "typescript": "^5.9.0",
-    "ultracite": "^7.9.4"
+    "@earendil-works/pi-tui"         : "0.84.0",
+    "@types/node"                    : "^22",
+    "typebox"                        : "1.3.7",
+    "typescript"                     : "^5.9.0",
+    "ultracite"                      : "^7.9.4"
   },
-  "scripts": {
-    "check": "ultracite check",
-    "fix": "ultracite fix",
-    "test": "node --test \"tests/**/*.test.ts\"",
+  "scripts"         : {
+    "check"     : "ultracite check",
+    "fix"       : "ultracite fix",
+    "test"      : "node --test \"tests/**/*.test.ts\"",
     "test:watch": "node --watch --test \"tests/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit",
-    "verify": "ultracite check && tsc --noEmit && node --test \"tests/**/*.test.ts\""
+    "typecheck" : "tsc --noEmit",
+    "verify"    : "ultracite check && tsc --noEmit && node --test \"tests/**/*.test.ts\""
   },
-  "type": "module",
-  "pi": {
-    "extensions": [
-      "./src/index.ts"
-    ],
-    "skills": [
-      "./skills"
-    ]
-  },
-  "overrides": {
-    "brace-expansion": "^5.0.8"
-  },
-  "name": "@juvio15/pi-seek",
-  "version": "0.3.2",
-  "engines": {
-    "node": ">=24"
-  },
-  "files": [
-    "src/",
-    "skills/",
-    "models.json",
-    "README.md"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/bjoernaagaard/pi-seek.git"
-  }
+  "type"            : "module",
+  "pi"              : { "extensions": ["./src/index.ts"], "skills": ["./skills"] },
+  "overrides"       : {"brace-expansion": "^5.0.8"},
+  "name"            : "@juvio15/pi-seek",
+  "version"         : "0.4.0",
+  "engines"         : {"node": ">=24"},
+  "files"           : ["src/", "skills/", "models.json", "README.md"],
+  "repository"      : {"type": "git", "url": "git+https://github.com/bjoernaagaard/pi-seek.git"}
 }
