@@ -208,7 +208,7 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
 
   pi.registerTool({
     description:
-      "Send a message to DeepSeek V4 Flash in a named conversation thread and get the reply. Threads are stateful across calls and keep the history, so DeepSeek can be run as a sub-agent. Replay is bounded (the last 200 items / 600k chars; oldest first) and transient failures retry with backoff; a context-length failure trims the replay once and retries. Use ds_chat_reset to clear a thread. Reasoning effort accepts none, minimal, low, medium, high, xhigh, or max; structured output is available via format (text, json_object, json_schema) plus an optional json_schema.",
+      "Send a message to DeepSeek V4 in a named conversation thread and get the reply. Threads are stateful across calls and keep the history, so DeepSeek can be run as a sub-agent. Replay is bounded (the last 200 items / 600k chars; oldest first) and transient failures retry with backoff; a context-length failure trims the replay once and retries. Use ds_chat_reset to clear a thread. Reasoning effort accepts none, minimal, low, medium, high, xhigh, or max; structured output is available via format (text, json_object, json_schema) plus an optional json_schema.",
     async execute(_toolCallId, params, signal, onUpdate, context) {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();
@@ -557,7 +557,7 @@ const registerFunctionTool = (
 
   pi.registerTool({
     description:
-      "Force DeepSeek V4 Flash to produce the named strict-mode function call for the given JSON schema. This helper uses non-thinking mode because DeepSeek rejects forced tool choice in thinking mode. The schema is normalized to DeepSeek's strict dialect (all object properties required, additionalProperties false, strings with supported pattern/format only, numbers with bounds/multipleOf, arrays without min/maxItems, enum/anyOf/$ref/$def). Returns the parsed arguments.",
+      "Force DeepSeek V4 to produce the named strict-mode function call for the given JSON schema. This helper uses non-thinking mode because DeepSeek rejects forced tool choice in thinking mode. The schema is normalized to DeepSeek's strict dialect (all object properties required, additionalProperties false, strings with supported pattern/format only, numbers with bounds/multipleOf, arrays without min/maxItems, enum/anyOf/$ref/$def). Returns the parsed arguments.",
     async execute(_toolCallId, params, signal, onUpdate, context) {
       if (!requireDeepSeekEnabled(runtimeState, context)) {
         return createDisabledToolResult();

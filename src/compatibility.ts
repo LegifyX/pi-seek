@@ -79,8 +79,8 @@ export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
     notes: [
       "stateless; previous_response_id/conversation/store and server-side persistence are unsupported",
       "documented model max is 384K output tokens; local registration uses 393216",
-      "Pro support is planned in the guide; not yet documented",
-      "live probe 2026-08-04: deepseek-v4-pro rejected on POST /responses (HTTP 400: Codex integration with deepseek-v4-pro available starting early August 2026); Pro stays unresolved",
+      "Pro support live since early August 2026; documented on Models & Pricing 2026-08-12",
+      "live probe 2026-08-04: deepseek-v4-pro rejected on POST /responses (HTTP 400: Codex integration with deepseek-v4-pro available starting early August 2026)",
       "live probe 2026-08-04: non-streaming call returned reasoning + message output items; usage paths input_tokens_details.cached_tokens and output_tokens_details.reasoning_tokens",
       "live probe 2026-08-04: streaming emitted response.created, response.in_progress, response.output_item.added, response.content_part.added, response.reasoning_text.delta, response.reasoning_text.done, response.content_part.done, response.output_item.done, response.incomplete; sequence_number monotonic; no keep-alive comments; no [DONE]; terminal event response.incomplete",
       "live probe 2026-08-04: strict function-call accepted valid arguments (tool_call_id, name, valid JSON) and rejected invalid fixtures with typed validator messages",

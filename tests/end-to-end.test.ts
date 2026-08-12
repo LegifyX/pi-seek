@@ -352,8 +352,9 @@ test("registers the provider, six tools, four commands, and three renderers", ()
   };
   assert.equal(providerConfig.api, "openai-responses");
   assert.equal(providerConfig.baseUrl, "https://api.deepseek.com");
-  assert.equal(providerConfig.models.length, 1);
+  assert.equal(providerConfig.models.length, 2);
   assert.equal(providerConfig.models[0]?.id, "deepseek-v4-flash");
+  assert.equal(providerConfig.models[1]?.id, "deepseek-v4-pro");
 
   const toolNames = sortedNames([...recording.tools.keys()]);
   assert.deepEqual(toolNames, [

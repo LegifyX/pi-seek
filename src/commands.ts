@@ -355,7 +355,7 @@ export const registerCommands = (
 ): void => {
   pi.registerCommand("ds", {
     description:
-      "One-shot chat with DeepSeek V4 Flash (Responses API). Usage: /ds <prompt>",
+      "One-shot chat with DeepSeek V4 (Responses API). Usage: /ds <prompt>",
     handler: async (args, context) => {
       const prompt = args.trim();
       await runOneShotChat(pi, prompt, context, services);

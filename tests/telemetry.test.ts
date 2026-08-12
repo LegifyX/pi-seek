@@ -351,6 +351,40 @@ test("cost math: input 1M -> 0.14, output 1M -> 0.28, cacheRead 1M -> 0.0028", (
   assert.ok(combined.cost.total > 0);
 });
 
+test("cost math for V4 Pro: input 1M -> 0.435, output 1M -> 0.87, cacheRead 1M -> 0.003625", () => {
+  const store = makeStore();
+  const inputOnly = store.record(
+    store.mapChatUsage(
+      { completion_tokens: 0, prompt_tokens: 1_000_000 },
+      "chat",
+      "deepseek-v4-pro"
+    )
+  );
+  assert.equal(inputOnly.model, "deepseek-v4-pro");
+  assert.equal(inputOnly.cost.input, 0.435);
+  const outputOnly = store.record(
+    store.mapChatUsage(
+      { completion_tokens: 1_000_000, prompt_tokens: 0 },
+      "chat",
+      "deepseek-v4-pro"
+    )
+  );
+  assert.equal(outputOnly.cost.output, 0.87);
+  const cacheOnly = store.record(
+    store.mapChatUsage(
+      {
+        completion_tokens: 0,
+        prompt_cache_hit_tokens: 1_000_000,
+        prompt_tokens: 1_000_000,
+      },
+      "chat",
+      "deepseek-v4-pro"
+    )
+  );
+  assert.equal(cacheOnly.cost.cacheRead, 0.003_625);
+  assert.equal(cacheOnly.cost.cacheWrite, 0);
+});
+
 test("record: hitRate is cacheRead / (cacheRead + input)", () => {
   const store = makeStore();
   const record = store.record(

@@ -1,7 +1,7 @@
 ---
 name: pi-seek
 description: >-
-  DeepSeek V4 Flash toolset for pi. Use when the user wants to chat with
+  DeepSeek V4 (Flash and Pro) toolset for pi. Use when the user wants to chat with
   DeepSeek in a named conversation thread (running it as a sub-agent with
   persistent history), complete code or structured text from an assistant
   prefix or fill the middle of a file, get a web answer with citations
@@ -11,7 +11,7 @@ description: >-
   or disabling the integration.
 ---
 
-# pi-seek — DeepSeek V4 Flash toolset
+# pi-seek — DeepSeek V4 (Flash and Pro) toolset
 
 Six tools (`ds_chat`, `ds_chat_reset`, `ds_prefix_complete`, `ds_fim`, `ds_web_search`, `ds_call_function`) plus four user-run commands (`/ds`, `/ds-cache`, `/ds-balance`, `/deepseek`). Pick a branch by the user's intent; each branch below carries its selection rule, inputs, caveats, and completion criterion.
 
@@ -111,4 +111,4 @@ The four commands are typed by the user; recommend them rather than faking them:
 - `/ds-cache` — KV-cache hit/miss tokens and cost of the last request.
 - `/ds-balance` — remaining account balance plus usage today and this session (60s TTL, falls back to the cached value on fetch failure).
 
-The status line (footer) shows the remaining balance after DeepSeek usage — `DS v4-flash · cache … · $cost · balance $N` — refreshed at most every 60s; `balance unavailable` when the account reports no usable balance. Open `/ds-balance` for the full card.
+The status line (footer) shows the remaining balance after DeepSeek usage — `DS v4-flash` or `DS v4-pro` · cache … · $cost · balance $N` — refreshed at most every 60s; `balance unavailable` when the account reports no usable balance. Open `/ds-balance` for the full card.

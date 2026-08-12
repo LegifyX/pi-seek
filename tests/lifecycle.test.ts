@@ -10,14 +10,17 @@ import {
   API_KEY_ENV,
   BASE_URL,
   CONTEXT_WINDOW,
-  COST,
   createRuntimeState,
   type DeepSeekRuntimeState,
+  FLASH_MODEL_ID,
   FOOTER_KEY,
   MAX_OUTPUT_TOKENS,
+  MODEL_COSTS,
   MODEL_ID,
+  PRO_MODEL_ID,
   PROVIDER_ID,
   THINKING_LEVEL_MAP,
+  type TokenCost,
   USAGE_ENTRY,
   type UsageRecord,
 } from "../src/config.ts";
@@ -35,7 +38,7 @@ interface RegisteredModel {
     supportsStrictMode: boolean;
   };
   contextWindow: number;
-  cost: typeof COST;
+  cost: TokenCost;
   id: string;
   input: string[];
   maxTokens: number;
@@ -70,7 +73,7 @@ const createFakePi = (): RecordingPi => {
 // registerProvider contract
 // ---------------------------------------------------------------------------
 
-test("registerProvider records the DeepSeek V4 Flash registration contract", () => {
+test("registerProvider records the DeepSeek V4 Flash and Pro registration contract", () => {
   const pi = createFakePi();
   registerProvider(pi as unknown as ExtensionAPI);
   assert.ok(pi.registered, "registerProvider must call pi.registerProvider");
@@ -80,27 +83,33 @@ test("registerProvider records the DeepSeek V4 Flash registration contract", () 
   assert.equal(spec.api, "openai-responses");
   assert.equal(spec.apiKey, `$${API_KEY_ENV}`);
   assert.equal(spec.baseUrl, BASE_URL);
-  assert.equal(spec.name, "DeepSeek V4 Flash (Responses API)");
-  assert.equal(spec.models.length, 1);
+  assert.equal(spec.name, "DeepSeek V4 (Responses API)");
+  assert.equal(spec.models.length, 2);
 
-  const [model] = spec.models;
-  assert.equal(model.id, MODEL_ID);
-  assert.equal(model.name, "DeepSeek V4 Flash");
-  assert.equal(model.contextWindow, CONTEXT_WINDOW);
-  assert.equal(model.maxTokens, MAX_OUTPUT_TOKENS);
-  assert.deepEqual(model.cost, COST);
-  assert.deepEqual(model.input, ["text"]);
-  assert.equal(model.reasoning, true);
-  assert.deepEqual(model.thinkingLevelMap, THINKING_LEVEL_MAP);
-  // Only OpenAIResponsesCompat fields: requiresReasoningContentOnAssistantMessages
-  // and supportsReasoningEffort are Chat-Completions-only and never read by the
-  // openai-responses adapter; supportsStrictMode is on because the Responses
-  // endpoint verifiably accepts strict:true function tools.
-  assert.deepEqual(model.compat, {
-    supportsDeveloperRole: false,
-    supportsLongCacheRetention: false,
-    supportsStrictMode: true,
-  });
+  const [flash, pro] = spec.models;
+  assert.equal(flash.id, FLASH_MODEL_ID);
+  assert.equal(flash.name, "DeepSeek V4 Flash");
+  assert.deepEqual(flash.cost, MODEL_COSTS[FLASH_MODEL_ID]);
+  assert.equal(pro.id, PRO_MODEL_ID);
+  assert.equal(pro.name, "DeepSeek V4 Pro");
+  assert.deepEqual(pro.cost, MODEL_COSTS[PRO_MODEL_ID]);
+
+  for (const model of spec.models) {
+    assert.equal(model.contextWindow, CONTEXT_WINDOW);
+    assert.equal(model.maxTokens, MAX_OUTPUT_TOKENS);
+    assert.deepEqual(model.input, ["text"]);
+    assert.equal(model.reasoning, true);
+    assert.deepEqual(model.thinkingLevelMap, THINKING_LEVEL_MAP);
+    // Only OpenAIResponsesCompat fields: requiresReasoningContentOnAssistantMessages
+    // and supportsReasoningEffort are Chat-Completions-only and never read by the
+    // openai-responses adapter; supportsStrictMode is on because the Responses
+    // endpoint verifiably accepts strict:true function tools.
+    assert.deepEqual(model.compat, {
+      supportsDeveloperRole: false,
+      supportsLongCacheRetention: false,
+      supportsStrictMode: true,
+    });
+  }
 });
 
 // The shipped models.json layer must not drift from the in-code registration:
@@ -137,13 +146,16 @@ test("models.json providers.deepseek-responses matches the registered spec", () 
   assert.deepEqual(provider.compat, spec.models[0].compat);
 
   assert.equal(provider.models.length, spec.models.length);
-  const [model] = provider.models;
-  assert.equal(model.id, spec.models[0].id);
-  assert.equal(model.name, spec.models[0].name);
-  assert.deepEqual(model.thinkingLevelMap, spec.models[0].thinkingLevelMap);
-  assert.deepEqual(model.cost, spec.models[0].cost);
-  assert.equal(model.contextWindow, spec.models[0].contextWindow);
-  assert.equal(model.maxTokens, spec.models[0].maxTokens);
+  for (const [index, model] of provider.models.entries()) {
+    const registered = spec.models[index];
+    assert.ok(registered, `registered spec must define model ${index}`);
+    assert.equal(model.id, registered.id);
+    assert.equal(model.name, registered.name);
+    assert.deepEqual(model.thinkingLevelMap, registered.thinkingLevelMap);
+    assert.deepEqual(model.cost, registered.cost);
+    assert.equal(model.contextWindow, registered.contextWindow);
+    assert.equal(model.maxTokens, registered.maxTokens);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -245,6 +257,25 @@ test("before_provider_request injects the default reasoning effort and strips sa
     handler(
       {
         payload: { model: MODEL_ID, temperature: 0.7, top_p: 0.9 },
+        type: "before_provider_request",
+      },
+      {}
+    )
+  );
+  const reasoning = asObject(result.reasoning);
+  assert.equal(reasoning.effort, runtimeState.defaultEffort);
+  assert.equal(Object.hasOwn(result, "temperature"), false);
+  assert.equal(Object.hasOwn(result, "top_p"), false);
+});
+
+test("before_provider_request applies the default reasoning effort to pro payloads too", () => {
+  const { pi, runtimeState } = createHandlerHarness();
+  const handler = getHandler(pi, "before_provider_request");
+
+  const result = asObject(
+    handler(
+      {
+        payload: { model: PRO_MODEL_ID, temperature: 0.7, top_p: 0.9 },
         type: "before_provider_request",
       },
       {}

@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BalanceStore } from "./balance.ts";
 import {
-  COST,
+  costForModel,
   currencySymbol,
   type DeepSeekRuntimeState,
   FOOTER_KEY,
@@ -24,8 +24,16 @@ import {
 export interface TelemetryStore {
   getHistory: () => UsageRecord[];
   getLastUsage: () => UsageRecord | null;
-  mapChatUsage: (usage: unknown, source: string) => PendingUsageRecord;
-  mapResponsesUsage: (usage: unknown, source: string) => PendingUsageRecord;
+  mapChatUsage: (
+    usage: unknown,
+    source: string,
+    model?: string
+  ) => PendingUsageRecord;
+  mapResponsesUsage: (
+    usage: unknown,
+    source: string,
+    model?: string
+  ) => PendingUsageRecord;
   record: (record: PendingUsageRecord) => UsageRecord;
   restore: (records: UsageRecord[]) => void;
   setFooter: (context?: ExtensionContext, balance?: BalanceStore) => void;
@@ -42,13 +50,15 @@ const calculateCost = (
   input: number,
   output: number,
   cacheRead: number,
-  cacheWrite: number
+  cacheWrite: number,
+  model: string
 ): UsageCost => {
+  const prices = costForModel(model);
   const cost = {
-    cacheRead: (cacheRead * COST.cacheRead) / TOKENS_PER_MILLION,
-    cacheWrite: (cacheWrite * COST.cacheWrite) / TOKENS_PER_MILLION,
-    input: (input * COST.input) / TOKENS_PER_MILLION,
-    output: (output * COST.output) / TOKENS_PER_MILLION,
+    cacheRead: (cacheRead * prices.cacheRead) / TOKENS_PER_MILLION,
+    cacheWrite: (cacheWrite * prices.cacheWrite) / TOKENS_PER_MILLION,
+    input: (input * prices.input) / TOKENS_PER_MILLION,
+    output: (output * prices.output) / TOKENS_PER_MILLION,
   };
   return {
     ...cost,
@@ -125,7 +135,8 @@ export const createTelemetryStore = (
 
   const mapResponsesUsage = (
     rawUsage: unknown,
-    source: string
+    source: string,
+    model: string = MODEL_ID
   ): PendingUsageRecord => {
     // Responses surface only: never read Chat/FIM field names here.
     const usage = isJsonObject(rawUsage) ? rawUsage : undefined;
@@ -141,9 +152,9 @@ export const createTelemetryStore = (
     return {
       cacheRead,
       cacheWrite,
-      cost: calculateCost(input, output, cacheRead, cacheWrite),
+      cost: calculateCost(input, output, cacheRead, cacheWrite, model),
       input,
-      model: MODEL_ID,
+      model,
       output,
       reasoning,
       source,
@@ -155,7 +166,8 @@ export const createTelemetryStore = (
 
   const mapChatUsage = (
     rawUsage: unknown,
-    source: string
+    source: string,
+    model: string = MODEL_ID
   ): PendingUsageRecord => {
     // Chat/FIM surface only: never read Responses field names here.
     const usage = isJsonObject(rawUsage) ? rawUsage : undefined;
@@ -169,9 +181,9 @@ export const createTelemetryStore = (
     return {
       cacheRead,
       cacheWrite: 0,
-      cost: calculateCost(input, output, cacheRead, 0),
+      cost: calculateCost(input, output, cacheRead, 0, model),
       input,
-      model: MODEL_ID,
+      model,
       output,
       reasoning,
       source,
@@ -197,7 +209,8 @@ export const createTelemetryStore = (
     }
     const cacheHit = (lastUsage.cacheRead / 1000).toFixed(1);
     const cacheMiss = (lastUsage.input / 1000).toFixed(1);
-    const status = `DS v4-flash · cache ${cacheHit}K hit / ${cacheMiss}K miss · $${lastUsage.cost.total.toFixed(4)}`;
+    const modelLabel = lastUsage.model.replace("deepseek-", "");
+    const status = `DS ${modelLabel} · cache ${cacheHit}K hit / ${cacheMiss}K miss · $${lastUsage.cost.total.toFixed(4)}`;
     context.ui.setStatus(FOOTER_KEY, status);
     if (!balance) {
       return;

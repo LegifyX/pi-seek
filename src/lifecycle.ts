@@ -7,15 +7,18 @@ import {
   API_KEY_ENV,
   BASE_URL,
   CONTEXT_WINDOW,
-  COST,
   type DeepSeekRuntimeState,
   type Effort,
+  FLASH_MODEL_ID,
   getObject,
   getString,
   isJsonObject,
+  isSupportedModelId,
   type JsonObject,
   MAX_OUTPUT_TOKENS,
+  MODEL_COSTS,
   MODEL_ID,
+  PRO_MODEL_ID,
   PROVIDER_ID,
   THINKING_LEVEL_MAP,
   USAGE_ENTRY,
@@ -27,6 +30,30 @@ import type { ThreadStore } from "./threads.ts";
 // Provider and lifecycle registration
 // ---------------------------------------------------------------------------
 
+// The openai-responses adapter reads only OpenAIResponsesCompat fields
+// (supportsDeveloperRole, sessionAffinityFormat, supportsLongCacheRetention,
+// supportsStrictMode, supportsOpenAIGrammarTools, supportsToolSearch,
+// supportsExplicitPromptCacheMode); Chat-Completions-only flags such as
+// requiresReasoningContentOnAssistantMessages and supportsReasoningEffort
+// are therefore not shipped. DeepSeek's 400 rule (reasoning_content must be
+// replayed on every follow-up request) is handled natively by the adapter's
+// thinkingSignature replay, and effort is controlled via thinkingLevelMap
+// plus reasoning.effort.
+const PROVIDER_MODEL_BASE = {
+  compat: {
+    supportsDeveloperRole: false,
+    supportsLongCacheRetention: false,
+    // The Responses endpoint accepts strict:true function tools (live
+    // verified), so the provider emits strict JSON-schema tools.
+    supportsStrictMode: true,
+  },
+  contextWindow: CONTEXT_WINDOW,
+  input: ["text"] as ("text" | "image")[],
+  maxTokens: MAX_OUTPUT_TOKENS,
+  reasoning: true,
+  thinkingLevelMap: THINKING_LEVEL_MAP,
+};
+
 export const registerProvider = (pi: ExtensionAPI): void => {
   pi.registerProvider(PROVIDER_ID, {
     api: "openai-responses",
@@ -34,33 +61,19 @@ export const registerProvider = (pi: ExtensionAPI): void => {
     baseUrl: BASE_URL,
     models: [
       {
-        // The openai-responses adapter reads only OpenAIResponsesCompat fields
-        // (supportsDeveloperRole, sessionAffinityFormat, supportsLongCacheRetention,
-        // supportsStrictMode, supportsOpenAIGrammarTools, supportsToolSearch,
-        // supportsExplicitPromptCacheMode); Chat-Completions-only flags such as
-        // requiresReasoningContentOnAssistantMessages and supportsReasoningEffort
-        // are therefore not shipped. DeepSeek's 400 rule (reasoning_content must be
-        // replayed on every follow-up request) is handled natively by the adapter's
-        // thinkingSignature replay, and effort is controlled via thinkingLevelMap
-        // plus reasoning.effort.
-        compat: {
-          supportsDeveloperRole: false,
-          supportsLongCacheRetention: false,
-          // The Responses endpoint accepts strict:true function tools (live
-          // verified), so the provider emits strict JSON-schema tools.
-          supportsStrictMode: true,
-        },
-        contextWindow: CONTEXT_WINDOW,
-        cost: COST,
-        id: MODEL_ID,
-        input: ["text"],
-        maxTokens: MAX_OUTPUT_TOKENS,
+        ...PROVIDER_MODEL_BASE,
+        cost: MODEL_COSTS[FLASH_MODEL_ID],
+        id: FLASH_MODEL_ID,
         name: "DeepSeek V4 Flash",
-        reasoning: true,
-        thinkingLevelMap: THINKING_LEVEL_MAP,
+      },
+      {
+        ...PROVIDER_MODEL_BASE,
+        cost: MODEL_COSTS[PRO_MODEL_ID],
+        id: PRO_MODEL_ID,
+        name: "DeepSeek V4 Pro",
       },
     ],
-    name: "DeepSeek V4 Flash (Responses API)",
+    name: "DeepSeek V4 (Responses API)",
   });
 };
 
@@ -110,7 +123,7 @@ export const registerLifecycleHandlers = (
       return;
     }
     const payload = isJsonObject(event.payload) ? event.payload : undefined;
-    if (!payload || payload.model !== MODEL_ID) {
+    if (!(payload && isSupportedModelId(payload.model))) {
       return;
     }
     applyDefaultReasoningEffort(payload, runtimeState.defaultEffort);

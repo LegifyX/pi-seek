@@ -1,12 +1,12 @@
 # pi-seek
 
-pi-seek is an extension for Pi. It connects Pi to the DeepSeek V4 Flash model. It uses the DeepSeek Responses API and the DeepSeek beta API.
+pi-seek is an extension for Pi. It connects Pi to the DeepSeek V4 Flash and V4 Pro models. It uses the DeepSeek Responses API and the DeepSeek beta API.
 
 ## What pi-seek adds to Pi
 
 pi-seek adds one provider, six tools, and four commands to Pi.
 
-**Provider.** Pi can use DeepSeek V4 Flash as its model provider. The provider name is `deepseek-responses`. The model name is `deepseek-v4-flash`.
+**Provider.** Pi can use DeepSeek V4 Flash or V4 Pro as its model provider. The provider name is `deepseek-responses`. The model names are `deepseek-v4-flash` and `deepseek-v4-pro`; the model picker selects the agent model. The `ds_*` tools use the model from the `DEEPSEEK_MODEL` setting.
 
 **Tools.**
 
@@ -103,6 +103,7 @@ pi -e npm:@juvio15/pi-seek
 |---|---|
 | `DEEPSEEK_API_KEY` | The DeepSeek API key. |
 | `DEEPSEEK_REQUEST_TIMEOUT_S` | The absolute request timeout in seconds. Without it, the timeout scales with the token budget. |
+| `DEEPSEEK_MODEL` | The model the `ds_*` tools use: `deepseek-v4-flash` (default) or `deepseek-v4-pro`. |
 | `reasoning_effort` | The reasoning effort of a request. The default is `high`. |
 
 ## Notes

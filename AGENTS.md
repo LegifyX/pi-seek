@@ -11,7 +11,7 @@
 # AGENTS.md
 
 This repository is a Pi extension. The package name is `pi-seek`.
-It adds DeepSeek V4 Flash Responses-API tools to Pi: `ds_chat`,
+It adds DeepSeek V4 Flash and V4 Pro Responses-API tools to Pi: `ds_chat`,
 `ds_chat_reset`, `ds_prefix_complete`, `ds_fim`, `ds_web_search`, and
 `ds_call_function`.
 

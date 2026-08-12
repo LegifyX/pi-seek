@@ -4,7 +4,36 @@
 // ---------------------------------------------------------------------------
 
 export const PROVIDER_ID = "deepseek-responses";
-export const MODEL_ID = "deepseek-v4-flash";
+export const FLASH_MODEL_ID = "deepseek-v4-flash";
+export const PRO_MODEL_ID = "deepseek-v4-pro";
+export const SUPPORTED_MODEL_IDS = [FLASH_MODEL_ID, PRO_MODEL_ID] as const;
+export type ModelId = (typeof SUPPORTED_MODEL_IDS)[number];
+
+export const MODEL_ENV = "DEEPSEEK_MODEL";
+
+export const isSupportedModelId = (value: unknown): value is ModelId =>
+  typeof value === "string" &&
+  (SUPPORTED_MODEL_IDS as readonly string[]).includes(value);
+
+// Resolves the model the ds_* tools target from MODEL_ENV; an empty value
+// selects V4 Flash and anything else must be a supported id. The provider
+// registration exposes both models, so Pi's model picker selects the agent
+// model independently of this constant.
+export const resolveModelId = (raw: string | undefined): ModelId => {
+  const trimmed = raw?.trim();
+  if (!trimmed) {
+    return FLASH_MODEL_ID;
+  }
+  if (!isSupportedModelId(trimmed)) {
+    throw new Error(
+      `${MODEL_ENV} must be one of ${SUPPORTED_MODEL_IDS.join(", ")}; got "${trimmed}"`
+    );
+  }
+  return trimmed;
+};
+
+// Every request body built by this extension carries this id.
+export const MODEL_ID: ModelId = resolveModelId(process.env[MODEL_ENV]);
 export const BASE_URL = "https://api.deepseek.com";
 export const BETA_URL = "https://api.deepseek.com/beta";
 export const API_KEY_ENV = "DEEPSEEK_API_KEY";
@@ -84,14 +113,34 @@ export const prependTimeNote = (
     : `${note} ${system}`;
 };
 
-// Prices per 1M tokens for deepseek-v4-flash. DeepSeek does not publish a
-// cache-write price for this model.
-export const COST = {
-  cacheRead: 0.0028,
-  cacheWrite: 0,
-  input: 0.14,
-  output: 0.28,
+export interface TokenCost {
+  cacheRead: number;
+  cacheWrite: number;
+  input: number;
+  output: number;
+}
+
+// Prices per 1M tokens (DeepSeek Models & Pricing, 2026-08-12). DeepSeek does
+// not publish a cache-write price for either model.
+export const MODEL_COSTS: Record<ModelId, TokenCost> = {
+  [FLASH_MODEL_ID]: {
+    cacheRead: 0.0028,
+    cacheWrite: 0,
+    input: 0.14,
+    output: 0.28,
+  },
+  [PRO_MODEL_ID]: {
+    cacheRead: 0.003_625,
+    cacheWrite: 0,
+    input: 0.435,
+    output: 0.87,
+  },
 };
+
+// Cost lookup for usage records. Unknown model ids cost at flash rates so the
+// ledger always produces a number; the known ids are flash and pro.
+export const costForModel = (model: string | undefined): TokenCost =>
+  isSupportedModelId(model) ? MODEL_COSTS[model] : MODEL_COSTS[FLASH_MODEL_ID];
 
 // Maps pi thinking levels (off/minimal/low/medium/high/xhigh/max) to the
 // DeepSeek Responses reasoning-effort values documented in docs/research/
