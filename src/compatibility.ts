@@ -4,6 +4,7 @@ import {
   CONTEXT_WINDOW,
   MAX_OUTPUT_TOKENS,
   MODEL_ID,
+  PRO_MODEL_ID,
 } from "./config.ts";
 
 // ---------------------------------------------------------------------------
@@ -64,7 +65,7 @@ export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
   {
     availability: "documented",
     baseUrl: BASE_URL,
-    documentedModels: [MODEL_ID],
+    documentedModels: [MODEL_ID, PRO_MODEL_ID],
     limits: {
       contextWindow: CONTEXT_WINDOW,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
@@ -129,7 +130,7 @@ export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
       "live probe 2026-08-04: beta prefix accepted deepseek-v4-flash and deepseek-v4-pro (HTTP 200)",
     ],
     path: "/chat/completions",
-    reasoning: [],
+    reasoning: ["thinking enabled/disabled", "reasoning_effort"],
     sources: [
       "https://api-docs.deepseek.com/guides/chat_prefix_completion/",
       "https://api-docs.deepseek.com/api/create-chat-completion/",
@@ -153,6 +154,7 @@ export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
     method: "POST",
     notes: [
       "max_tokens cap is documented as 4K; kept at 4096",
+      "finish_reason insufficient_system_resource documented (interrupted request); surfaced in details.finish_reason",
       "live probe 2026-08-04: beta /completions accepted deepseek-v4-flash and deepseek-v4-pro (HTTP 200)",
       "live probe 2026-08-04: max_tokens 4097 was ACCEPTED (HTTP 200), contradicting the documented 4K cap; cap stays 4096 as documented",
     ],
@@ -194,7 +196,7 @@ export const COMPATIBILITY_MATRIX: readonly CompatibilityRow[] = [
   {
     availability: "documented",
     baseUrl: BASE_URL,
-    documentedModels: [],
+    documentedModels: [MODEL_ID, PRO_MODEL_ID],
     limits: {},
     liveProbe: {
       date: "2026-08-04",

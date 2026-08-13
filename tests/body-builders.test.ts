@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Type } from "typebox";
 import { __test } from "../src/index.ts";
+import {
+  CallFunctionParams,
+  ChatParams,
+  FimParams,
+  WebSearchParams,
+} from "../src/params.ts";
 
 const { buildChatBody, buildFimBody, buildPrefixBody, buildWebSearchBody } =
   __test;
@@ -193,4 +199,64 @@ test("fim body with all fields sets max_tokens, never max_output_tokens", () => 
     stream: false,
     suffix: "after",
   });
+});
+
+test("chat body passes documented sampling params through", () => {
+  const body = buildChatBody(INPUT, {
+    effort: "none",
+    temperature: 0.3,
+    top_p: 0.9,
+  });
+  assert.deepEqual(body.temperature, 0.3);
+  assert.deepEqual(body.top_p, 0.9);
+});
+
+test("prefix body accepts a single stop string and sampling params", () => {
+  const body = buildPrefixBody({
+    prefix: "```",
+    prompt: "write quick sort",
+    stop: "```",
+    temperature: 0.2,
+    top_p: 0.8,
+  });
+  assert.equal(body.stop, "```");
+  assert.equal(body.temperature, 0.2);
+  assert.equal(body.top_p, 0.8);
+});
+
+test("fim body accepts a single stop string, logprobs, and sampling params", () => {
+  const body = buildFimBody({
+    logprobs: 5,
+    prompt: "before",
+    stop: "END",
+    suffix: "after",
+    temperature: 0.1,
+    top_p: 0.7,
+  });
+  assert.equal(body.stop, "END");
+  assert.equal(body.logprobs, 5);
+  assert.equal(body.temperature, 0.1);
+  assert.equal(body.top_p, 0.7);
+});
+
+test("tool parameter schemas enforce documented caps", () => {
+  const chatMax = ChatParams.properties.max_output_tokens as {
+    maximum?: number;
+  };
+  assert.equal(chatMax.maximum, 393_216);
+  const searchMax = WebSearchParams.properties.max_output_tokens as {
+    maximum?: number;
+  };
+  assert.equal(searchMax.maximum, 393_216);
+  const fimLogprobs = FimParams.properties.logprobs as { maximum?: number };
+  assert.equal(fimLogprobs.maximum, 20);
+  const stopSchema = FimParams.properties.stop as {
+    anyOf?: Array<{ maxItems?: number; type?: string }>;
+  };
+  const stopArray = stopSchema.anyOf?.find((branch) => branch.type === "array");
+  assert.equal(stopArray?.maxItems, 16);
+  const nameSchema = CallFunctionParams.properties.name as {
+    maxLength?: number;
+  };
+  assert.equal(nameSchema.maxLength, 64);
 });

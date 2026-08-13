@@ -322,6 +322,10 @@ export interface ResponseChatOptions {
   maxOutputTokens?: number;
   signal?: AbortSignal;
   system?: string;
+  // Documented Responses sampling controls; the API ignores them while
+  // thinking is enabled (reasoning.effort != none).
+  temperature?: number;
+  top_p?: number;
 }
 
 export const isJsonObject = (value: unknown): value is JsonObject =>

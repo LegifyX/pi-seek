@@ -25,7 +25,7 @@ const WRONG_FUNCTION_RE =
 const MISSING_ARGUMENTS_RE =
   /returned no arguments for required function "lookup"/;
 const INVALID_FUNCTION_NAME_RE =
-  /Invalid function name ".*" for ds_call_function: names must be nonempty, alphanumeric\/underscore\/hyphen, and at most 128 characters/;
+  /Invalid function name ".*" for ds_call_function: names must be nonempty, alphanumeric\/underscore\/hyphen, and at most 64 characters/;
 
 // ---------------------------------------------------------------------------
 // Pure validator coverage
@@ -392,6 +392,7 @@ test("invalid function names are rejected before any network call", async () => 
     "",
     "lookup.fn",
     "Ünïcode",
+    "x".repeat(65),
     "x".repeat(129),
   ];
   const results = await Promise.all(

@@ -46,6 +46,7 @@ export const ChatParams = Type.Object({
   max_output_tokens: Type.Optional(
     Type.Integer({
       description: "Maximum output tokens for this round",
+      maximum: MAX_OUTPUT_TOKENS,
       minimum: 16,
     })
   ),
@@ -57,10 +58,26 @@ export const ChatParams = Type.Object({
         "System prompt for a NEW thread; ignored when the thread already exists",
     })
   ),
+  temperature: Type.Optional(
+    Type.Number({
+      description:
+        "Sampling temperature (0-2, default 1). No effect while reasoning_effort is not none.",
+      maximum: 2,
+      minimum: 0,
+    })
+  ),
   thread: Type.String({
     description:
       "Name of the conversation thread to continue (created on first use)",
   }),
+  top_p: Type.Optional(
+    Type.Number({
+      description:
+        "Nucleus sampling (0-1, default 1). No effect while reasoning_effort is not none.",
+      maximum: 1,
+      minimum: 0,
+    })
+  ),
 });
 
 export const ChatResetParams = Type.Object({
@@ -68,6 +85,31 @@ export const ChatResetParams = Type.Object({
     Type.String({ description: "Thread to reset; omit to reset all threads" })
   ),
 });
+
+// Beta surfaces (chat prefix completion, FIM) share documented sampling and
+// stop controls (create-completion / chat-completions references).
+const StopParam = Type.Optional(
+  Type.Union([Type.String(), Type.Array(Type.String(), { maxItems: 16 })], {
+    description:
+      "Stop sequence, or up to 16 sequences where generation ends; the stop text is not included in the result",
+  })
+);
+
+const TemperatureParam = Type.Optional(
+  Type.Number({
+    description: "Sampling temperature (0-2, default 1)",
+    maximum: 2,
+    minimum: 0,
+  })
+);
+
+const TopPParam = Type.Optional(
+  Type.Number({
+    description: "Nucleus sampling (0-1, default 1)",
+    maximum: 1,
+    minimum: 0,
+  })
+);
 
 export const PrefixParams = Type.Object({
   max_tokens: Type.Optional(
@@ -85,14 +127,20 @@ export const PrefixParams = Type.Object({
   prompt: Type.String({
     description: 'User instruction, e.g. "Please write quick sort code"',
   }),
-  stop: Type.Optional(
-    Type.Array(Type.String(), {
-      description: 'Stop sequences, e.g. ["```"]',
-    })
-  ),
+  stop: StopParam,
+  temperature: TemperatureParam,
+  top_p: TopPParam,
 });
 
 export const FimParams = Type.Object({
+  logprobs: Type.Optional(
+    Type.Integer({
+      description:
+        "Return the logprobs for the N most likely output tokens (max 20)",
+      maximum: 20,
+      minimum: 0,
+    })
+  ),
   max_tokens: Type.Optional(
     Type.Integer({
       description: "Maximum tokens (FIM cap is 4K)",
@@ -101,16 +149,18 @@ export const FimParams = Type.Object({
     })
   ),
   prompt: Type.String({ description: "Code before the gap to fill" }),
-  stop: Type.Optional(
-    Type.Array(Type.String(), { description: "Stop sequences" })
-  ),
+  stop: StopParam,
   suffix: Type.Optional(
     Type.String({ description: "Code after the gap (optional)" })
   ),
+  temperature: TemperatureParam,
+  top_p: TopPParam,
 });
 
 export const WebSearchParams = Type.Object({
-  max_output_tokens: Type.Optional(Type.Integer({ minimum: 16 })),
+  max_output_tokens: Type.Optional(
+    Type.Integer({ maximum: MAX_OUTPUT_TOKENS, minimum: 16 })
+  ),
   query: Type.String({ description: "The search query" }),
   reasoning_effort: EffortParam,
 });
@@ -127,8 +177,8 @@ export const CallFunctionParams = Type.Object({
   ),
   name: Type.String({
     description:
-      "Name of the function the model should call. Must be nonempty, alphanumeric/underscore/hyphen, and at most 128 characters.",
-    maxLength: 128,
+      "Name of the function the model should call. Must be nonempty, alphanumeric/underscore/hyphen, and at most 64 characters (beta chat-completions surface limit).",
+    maxLength: 64,
     minLength: 1,
     pattern: "^[a-zA-Z0-9_-]+$",
   }),

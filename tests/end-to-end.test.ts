@@ -330,6 +330,12 @@ const asTextResult = (result: unknown): string => {
 };
 
 const DEEPSEEK_PROGRESS_PATTERN = /DeepSeek/;
+const INCOMPLETE_NOTE_PATTERN =
+  /\[note: response incomplete \(max_output_tokens\)\]/;
+const TIME_NOTE_PATTERN = /Current time: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z/;
+const FIM_STOP_NOTE_PATTERN =
+  /\[note: completion stopped: insufficient_system_resource\]/;
+const PREFIX_STOP_NOTE_PATTERN = /\[note: completion stopped: length\]/;
 
 const sortedNames = (names: string[]): string[] =>
   [...names].sort((a, b) => a.localeCompare(b));
@@ -591,6 +597,161 @@ test("ds_fim posts a prompt completion to beta completions", async (t) => {
   assert.equal(body.prompt, "def answer():");
 
   assert.equal(asTextResult(result), "  return 42");
+});
+
+test("ds_chat passes temperature and top_p through to /responses", async (t) => {
+  const { recording, transport } = createHarness();
+  transport.route(
+    "POST",
+    "https://api.deepseek.com/responses",
+    () => responsesChatCompleted
+  );
+  transport.install();
+  t.after(() => transport.uninstall());
+
+  await executeTool(recording, "ds_chat", {
+    message: "hi",
+    temperature: 0.3,
+    thread: "e2e",
+    top_p: 0.9,
+  });
+
+  const body = transport.requests[0]?.body as {
+    temperature?: number;
+    top_p?: number;
+  };
+  assert.equal(body.temperature, 0.3);
+  assert.equal(body.top_p, 0.9);
+});
+
+test("ds_chat surfaces an incomplete response with its reason", async (t) => {
+  const { recording, transport } = createHarness();
+  transport.route("POST", "https://api.deepseek.com/responses", () => ({
+    id: "resp_e2e_incomplete",
+    incomplete_details: { reason: "max_output_tokens" },
+    model: "deepseek-v4-flash",
+    object: "response",
+    output: [
+      {
+        content: [{ text: "Partial answer", type: "output_text" }],
+        id: "msg_e2e_inc",
+        role: "assistant",
+        type: "message",
+      },
+    ],
+    status: "incomplete",
+    usage: {
+      input_tokens: 100,
+      input_tokens_details: { cached_tokens: 0 },
+      output_tokens: 50,
+      output_tokens_details: {},
+      total_tokens: 150,
+    },
+  }));
+  transport.install();
+  t.after(() => transport.uninstall());
+
+  const result = await executeTool(recording, "ds_chat", {
+    message: "long answer please",
+    thread: "e2e",
+  });
+  const { details } = result as { details: Record<string, unknown> };
+  assert.equal(details.status, "incomplete");
+  assert.equal(details.incomplete_reason, "max_output_tokens");
+  assert.match(asTextResult(result), INCOMPLETE_NOTE_PATTERN);
+});
+
+test("ds_chat keeps the time note in instructions on every round", async (t) => {
+  const { recording, transport } = createHarness();
+  transport.route(
+    "POST",
+    "https://api.deepseek.com/responses",
+    () => responsesChatCompleted
+  );
+  transport.install();
+  t.after(() => transport.uninstall());
+
+  await executeTool(recording, "ds_chat", {
+    message: "first",
+    system: "Be terse",
+    thread: "e2e",
+  });
+  await executeTool(recording, "ds_chat", {
+    message: "second",
+    thread: "e2e",
+  });
+
+  assert.equal(transport.requests.length, 2);
+  for (const request of transport.requests) {
+    const { instructions } = request.body as { instructions?: string };
+    assert.ok(instructions, "instructions must be present");
+    assert.match(instructions, TIME_NOTE_PATTERN);
+  }
+});
+
+test("ds_fim surfaces finish_reason and notes interrupted completions", async (t) => {
+  const { recording, transport } = createHarness();
+  transport.route("POST", "https://api.deepseek.com/beta/completions", () => ({
+    choices: [
+      {
+        finish_reason: "insufficient_system_resource",
+        index: 0,
+        text: "  partial",
+      },
+    ],
+    id: "cmp_e2e_1",
+    object: "text_completion",
+    usage: {
+      completion_tokens: 2,
+      prompt_cache_hit_tokens: 1,
+      prompt_cache_miss_tokens: 3,
+      prompt_tokens: 4,
+      total_tokens: 6,
+    },
+  }));
+  transport.install();
+  t.after(() => transport.uninstall());
+
+  const result = await executeTool(recording, "ds_fim", { prompt: "def f():" });
+  const { details } = result as { details: Record<string, unknown> };
+  assert.equal(details.finish_reason, "insufficient_system_resource");
+  assert.match(asTextResult(result), FIM_STOP_NOTE_PATTERN);
+});
+
+test("ds_prefix_complete surfaces a length-truncated finish_reason", async (t) => {
+  const { recording, transport } = createHarness();
+  transport.route(
+    "POST",
+    "https://api.deepseek.com/beta/chat/completions",
+    () => ({
+      choices: [
+        {
+          finish_reason: "length",
+          index: 0,
+          message: { content: "```py", role: "assistant" },
+        },
+      ],
+      id: "chat_e2e_trunc",
+      object: "chat.completion",
+      usage: {
+        completion_tokens: 10,
+        prompt_cache_hit_tokens: 5,
+        prompt_cache_miss_tokens: 8,
+        prompt_tokens: 13,
+        total_tokens: 23,
+      },
+    })
+  );
+  transport.install();
+  t.after(() => transport.uninstall());
+
+  const result = await executeTool(recording, "ds_prefix_complete", {
+    prefix: "```py",
+    prompt: "write quick sort",
+  });
+  const { details } = result as { details: Record<string, unknown> };
+  assert.equal(details.finish_reason, "length");
+  assert.match(asTextResult(result), PREFIX_STOP_NOTE_PATTERN);
 });
 
 test("ds_web_search posts to /responses with a web_search tool", async (t) => {

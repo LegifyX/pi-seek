@@ -2,6 +2,7 @@ import {
   DEFAULT_EFFORT,
   type Effort,
   getArray,
+  getObject,
   getString,
   isJsonObject,
   type JsonObject,
@@ -86,6 +87,7 @@ export const extractResponsesText = (
 // payload. The base ResponsesResult (in config.ts) stays untouched; this
 // extension lives at the parsing layer.
 export interface ParsedResponsesResult extends ResponsesResult {
+  error?: JsonObject;
   incompleteDetails?: unknown;
   status?: string;
 }
@@ -98,6 +100,7 @@ export const parseResponsesResult = (
   const extracted = extractResponsesText(output);
   return {
     ...extracted,
+    error: getObject(response, "error"),
     incompleteDetails: response.incomplete_details,
     items: output,
     responseId: getString(response, "id"),
@@ -121,6 +124,12 @@ export const buildChatBody = (
   }
   if (options.maxOutputTokens) {
     body.max_output_tokens = options.maxOutputTokens;
+  }
+  if (options.temperature !== undefined) {
+    body.temperature = options.temperature;
+  }
+  if (options.top_p !== undefined) {
+    body.top_p = options.top_p;
   }
   if (options.format) {
     // text.format is documented as text | json_object | json_schema; the
@@ -158,7 +167,9 @@ export const buildPrefixBody = (params: {
   max_tokens?: number;
   prefix: string;
   prompt: string;
-  stop?: string[];
+  stop?: string | string[];
+  temperature?: number;
+  top_p?: number;
 }): JsonObject => {
   const body: JsonObject = {
     messages: [
@@ -174,14 +185,23 @@ export const buildPrefixBody = (params: {
   if (params.max_tokens) {
     body.max_tokens = params.max_tokens;
   }
+  if (params.temperature !== undefined) {
+    body.temperature = params.temperature;
+  }
+  if (params.top_p !== undefined) {
+    body.top_p = params.top_p;
+  }
   return body;
 };
 
 export const buildFimBody = (params: {
+  logprobs?: number;
   max_tokens?: number;
   prompt: string;
-  stop?: string[];
+  stop?: string | string[];
   suffix?: string;
+  temperature?: number;
+  top_p?: number;
 }): JsonObject => {
   const body: JsonObject = {
     model: MODEL_ID,
@@ -196,6 +216,15 @@ export const buildFimBody = (params: {
   }
   if (params.stop?.length) {
     body.stop = params.stop;
+  }
+  if (params.logprobs !== undefined) {
+    body.logprobs = params.logprobs;
+  }
+  if (params.temperature !== undefined) {
+    body.temperature = params.temperature;
+  }
+  if (params.top_p !== undefined) {
+    body.top_p = params.top_p;
   }
   return body;
 };

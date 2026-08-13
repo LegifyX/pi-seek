@@ -34,17 +34,19 @@ Every tool checks the integration gate first: while disabled, all six return "De
 
 Intent: multi-round conversation with persistent history; DeepSeek runs as a **sub-agent** on a named **thread**.
 
-`ds_chat` — required `thread` (created on first use) and `message`. Optional `system` (applies only to a NEW thread; ignored once the thread exists), `reasoning_effort` (`low`|`high`|`max`), `max_output_tokens` (≥ 16).
+`ds_chat` — required `thread` (created on first use) and `message`. Optional `system` (applies only to a NEW thread; ignored once the thread exists), `reasoning_effort` (`none`|`minimal`|`low`|`medium`|`high`|`xhigh`|`max`), `max_output_tokens` (16–393216), `temperature` (0–2) and `top_p` (0–1) — both have no effect while thinking is enabled (any `reasoning_effort` other than `none`).
 
 Caveats, co-located:
 - History replay is bounded to the last 200 items / 600k chars, oldest first, latest user message always kept; `details.trimmed_history` and `details.history_items` appear when a trim happened.
-- The first call — or any call while no `system` is set — prepends a bounded
-  "Current time: …" note to the instructions unless the caller's system
-  already carries a time note; threads remember the original system, never the
-  injected note.
+- Every call prepends a bounded "Current time: …" note to the instructions
+  unless the caller's system already carries a time note; the note is
+  minute-precision, so rounds within the same minute keep an identical
+  instructions prefix (KV-cache friendly). Threads remember the original
+  system, never the injected note.
 - A context-length 400 trims the replay once and retries once (`details.trimmed`); if nothing is droppable the error propagates.
 - An aborted request returns "Interrupted by the caller." with `details.interrupted` and the thread untouched — resume with the same name.
 - `function_call` / `web_search_call` items are not persisted across rounds.
+- A response that is not `completed` (e.g. cut off at `max_output_tokens`) surfaces `details.status` / `details.incomplete_reason` / `details.error` and a `[note: response incomplete …]` suffix; retry with a higher `max_output_tokens` or a trimmed thread.
 - Reply text can carry a `[note: …]` suffix (retries, unexpected function calls — unexpected calls mean the chat should have been `ds_call_function`); an empty reply comes back as `(empty reply)`.
 
 `ds_chat_reset` — optional `thread`; omit to reset ALL threads. Returns the cleared thread's name, or a confirmation that all threads were reset.
@@ -57,9 +59,9 @@ Completion criterion (checkable): the reply answers the current `message`; if it
 
 Intent: complete code or structured text where the model continues from given context rather than answering freely.
 
-`ds_prefix_complete` — required `prompt` (instruction) and `prefix` (assistant text to continue from, e.g. `"```python\n"`). Optional `stop` (sequences, e.g. `["```"]`), `max_tokens` (1–393216). Returns the continuation; `details.full` is `prefix + completion`.
+`ds_prefix_complete` — required `prompt` (instruction) and `prefix` (assistant text to continue from, e.g. `"```python\n"`). Optional `stop` (one sequence or up to 16, e.g. `["```"]`), `max_tokens` (1–393216), `temperature` (0–2), `top_p` (0–1). Returns the continuation; `details.full` is `prefix + completion`; `details.finish_reason` reports how generation ended (`stop` is normal; `length`/`content_filter`/`insufficient_system_resource` get a `[note: completion stopped: …]` suffix).
 
-`ds_fim` — required `prompt` (code before the gap). Optional `suffix` (code after the gap), `stop`, `max_tokens` (API cap 4096). Returns the middle.
+`ds_fim` — required `prompt` (code before the gap). Optional `suffix` (code after the gap), `stop` (one sequence or up to 16), `max_tokens` (API cap 4096), `temperature` (0–2), `top_p` (0–1), `logprobs` (0–20). Returns the middle; `details.finish_reason` reports how generation ended.
 
 Selection: code on both sides of the gap → `ds_fim`; continuing from a known prefix in structured output → `ds_prefix_complete`; both accept `stop` to end at a delimiter.
 
@@ -91,7 +93,7 @@ Completion criterion (checkable): `details.name` equals the requested `name` and
 
 All six tool identifiers are plain snake_case, so Fabric reaches them directly in full code mode:
 
-`extensions.ds_chat({thread, message, system?, reasoning_effort?, max_output_tokens?})` · `extensions.ds_chat_reset({thread?})` · `extensions.ds_prefix_complete({prompt, prefix, stop?, max_tokens?})` · `extensions.ds_fim({prompt, suffix?, stop?, max_tokens?})` · `extensions.ds_web_search({query, reasoning_effort?, max_output_tokens?})` · `extensions.ds_call_function({name, parameters, context?, description?})`
+`extensions.ds_chat({thread, message, system?, reasoning_effort?, max_output_tokens?, temperature?, top_p?})` · `extensions.ds_chat_reset({thread?})` · `extensions.ds_prefix_complete({prompt, prefix, stop?, max_tokens?, temperature?, top_p?})` · `extensions.ds_fim({prompt, suffix?, stop?, max_tokens?, temperature?, top_p?, logprobs?})` · `extensions.ds_web_search({query, reasoning_effort?, max_output_tokens?})` · `extensions.ds_call_function({name, parameters, context?, description?})`
 
 Discovery fallback: `tools.search({query: "deepseek"})` to find the tools, `tools.describe({ref: "extensions.<name>"})` for the full input schema, `tools.call({ref, args})` to invoke. Refs are namespaced — bare names are rejected.
 

@@ -1,4 +1,5 @@
-import type { ResponseChatOptions, ResponsesResult } from "./config.ts";
+import type { ResponseChatOptions } from "./config.ts";
+import type { ParsedResponsesResult } from "./responses.ts";
 import {
   isContextLengthError,
   MAX_RETRIES,
@@ -17,13 +18,13 @@ export interface ChatService {
   chat: (
     input: unknown[],
     options: ResponseChatOptions
-  ) => Promise<ResponsesResult>;
+  ) => Promise<ParsedResponsesResult>;
 }
 
 export type ChatOutcome =
   | {
       interrupted: false;
-      result: ResponsesResult;
+      result: ParsedResponsesResult;
       retries: number;
       // Items dropped by the context-length trim-and-retry (0 when no trim).
       trimmed: number;
@@ -58,7 +59,9 @@ export const runChatWithRecovery = async (
   options: ResponseChatOptions,
   deps: { wait?: RetryOptions["wait"] } = {}
 ): Promise<ChatOutcome> => {
-  const attempt = (items: unknown[]): Promise<RetryOutcome<ResponsesResult>> =>
+  const attempt = (
+    items: unknown[]
+  ): Promise<RetryOutcome<ParsedResponsesResult>> =>
     withRetries(() => service.chat(items, options), {
       maxRetries: MAX_RETRIES,
       signal: options.signal,

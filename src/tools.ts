@@ -98,16 +98,16 @@ const buildUserMessage = (text: string): JsonObject => ({
   role: "user",
 });
 
-// Time note: inject only on the first call or while no caller system is set,
-// and only when the caller did not already provide one. Threads remember the
-// original system, so the note is applied to the request only and never
-// stored into the thread.
-const resolveInstructions = (thread: Thread): string | undefined => {
-  const injectTimeNote =
-    (thread.round === 0 || thread.system === undefined) &&
-    !systemHasTimeNote(thread.system);
-  return injectTimeNote ? prependTimeNote(thread.system) : thread.system;
-};
+// Time note: inject on every round unless the system already carries one.
+// The note is minute-precision, so rounds within the same minute keep an
+// identical instructions prefix (a KV-cache hit across rounds) while the
+// model still sees a fresh timestamp. Threads remember the original system,
+// so the note is applied to the request only and never stored into the
+// thread.
+const resolveInstructions = (thread: Thread): string | undefined =>
+  systemHasTimeNote(thread.system)
+    ? thread.system
+    : prependTimeNote(thread.system);
 
 // Polite interruption: never throw a raw abort error; return a bounded
 // structured result so the parent agent can recover.
@@ -120,15 +120,14 @@ const isCallerAbort = (error: unknown): boolean =>
   error instanceof RetryWaitAbortedError ||
   (error instanceof Error && error.message === "Aborted by user");
 
-// DeepSeek documents function names as unique, nonempty, alphanumeric/
-// underscore/hyphen, and at most 128 characters (Create response verified
-// constraints; shared Tool calls guide). Reject invalid names locally with a
-// typed error before any network call.
+// ds_call_function posts to the beta chat-completions surface, whose function
+// name limit is 64 characters (the Responses surface allows 128). Reject
+// invalid names locally with a typed error before any network call.
 const FUNCTION_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const validateFunctionName = (name: string): void => {
-  if (name.length > 128 || !FUNCTION_NAME_PATTERN.test(name)) {
+  if (name.length > 64 || !FUNCTION_NAME_PATTERN.test(name)) {
     throw new Error(
-      `Invalid function name "${name}" for ds_call_function: names must be nonempty, alphanumeric/underscore/hyphen, and at most 128 characters`
+      `Invalid function name "${name}" for ds_call_function: names must be nonempty, alphanumeric/underscore/hyphen, and at most 64 characters`
     );
   }
 };
@@ -139,7 +138,8 @@ const interruptedPhase = (error: unknown): "request" | "retry_wait" =>
 const buildChatReply = (
   text: string,
   calls: JsonObject[],
-  retries: number
+  retries: number,
+  statusNote?: string
 ): string => {
   const notes: string[] = [];
   if (calls.length > 0) {
@@ -149,6 +149,9 @@ const buildChatReply = (
   }
   if (retries > 0) {
     notes.push(`retried ${retries}x`);
+  }
+  if (statusNote) {
+    notes.push(statusNote);
   }
   return notes.length > 0 ? `${text}\n\n[note: ${notes.join("; ")}]` : text;
 };
@@ -166,9 +169,12 @@ interface ChatDetailsInput {
 
 const buildChatDetails = (input: ChatDetailsInput) => {
   const details: {
+    error?: string;
     history_items?: number;
+    incomplete_reason?: string;
     retries?: number;
     round: number;
+    status?: string;
     thinking: string;
     thread: {
       items: unknown[];
@@ -190,6 +196,17 @@ const buildChatDetails = (input: ChatDetailsInput) => {
     },
     usage: input.usage,
   };
+  const { result } = input.outcome;
+  if (result.status !== undefined && result.status !== "completed") {
+    details.status = result.status;
+    if (isJsonObject(result.incompleteDetails)) {
+      details.incomplete_reason = getString(result.incompleteDetails, "reason");
+    }
+    const errorMessage = getString(result.error, "message");
+    if (errorMessage) {
+      details.error = errorMessage;
+    }
+  }
   if (input.outcome.trimmed > 0) {
     details.trimmed = input.outcome.trimmed;
   }
@@ -239,6 +256,8 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
           maxOutputTokens: params.max_output_tokens,
           signal: signal ?? context.signal,
           system: resolveInstructions({ ...thread, system: stagedSystem }),
+          temperature: params.temperature,
+          top_p: params.top_p,
         });
 
         if (outcome.interrupted) {
@@ -256,11 +275,21 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
         telemetry.setFooter(context, services.balance);
 
+        const statusNote =
+          outcome.result.status !== undefined &&
+          outcome.result.status !== "completed"
+            ? `response ${outcome.result.status}${
+                isJsonObject(outcome.result.incompleteDetails)
+                  ? ` (${getString(outcome.result.incompleteDetails, "reason") ?? "unknown reason"})`
+                  : ""
+              }`
+            : undefined;
         const reply =
           buildChatReply(
             outcome.result.text,
             outcome.result.calls,
-            outcome.retries
+            outcome.retries,
+            statusNote
           ) || "(empty reply)";
         return {
           content: [{ text: reply, type: "text" as const }],
@@ -344,23 +373,31 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
           { maxRetries: MAX_RETRIES, signal: requestSignal }
         );
         const response = outcome.result;
-        const message = getObject(getFirstChoice(response), "message");
+        const choice = getFirstChoice(response);
+        const message = getObject(choice, "message");
         const completion = getString(message, "content") ?? "";
+        const finishReason = getString(choice, "finish_reason");
         const usage = telemetry.mapChatUsage(response.usage, "prefix");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
         telemetry.setFooter(context, services.balance);
         const rawUsage = isJsonObject(response.usage)
           ? response.usage
           : undefined;
+        const completionText = completion || "(empty completion)";
+        const stopNote =
+          finishReason !== undefined && finishReason !== "stop"
+            ? ` [note: completion stopped: ${finishReason}]`
+            : "";
         return {
           content: [
             {
-              text: completion || "(empty completion)",
+              text: `${completionText}${stopNote}`,
               type: "text" as const,
             },
           ],
           details: {
             ...(outcome.retries > 0 ? { retries: outcome.retries } : {}),
+            finish_reason: finishReason,
             full: params.prefix + completion,
             prompt_cache_hit_tokens: getNumber(
               rawUsage,
@@ -412,22 +449,30 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
           { maxRetries: MAX_RETRIES, signal: requestSignal }
         );
         const response = outcome.result;
-        const completion = getString(getFirstChoice(response), "text") ?? "";
+        const choice = getFirstChoice(response);
+        const completion = getString(choice, "text") ?? "";
+        const finishReason = getString(choice, "finish_reason");
         const usage = telemetry.mapChatUsage(response.usage, "fim");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
         telemetry.setFooter(context, services.balance);
         const rawUsage = isJsonObject(response.usage)
           ? response.usage
           : undefined;
+        const completionText = completion || "(empty completion)";
+        const stopNote =
+          finishReason !== undefined && finishReason !== "stop"
+            ? ` [note: completion stopped: ${finishReason}]`
+            : "";
         return {
           content: [
             {
-              text: completion || "(empty completion)",
+              text: `${completionText}${stopNote}`,
               type: "text" as const,
             },
           ],
           details: {
             ...(outcome.retries > 0 ? { retries: outcome.retries } : {}),
+            finish_reason: finishReason,
             prompt_cache_hit_tokens: getNumber(
               rawUsage,
               "prompt_cache_hit_tokens"
