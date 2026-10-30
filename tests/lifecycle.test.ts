@@ -223,6 +223,7 @@ const createContext = (
       setStatus: (key: string, value: string | undefined) => {
         calls.push({ key, value });
       },
+      theme: { fg: (_color: string, text: string) => text },
     },
   } as unknown as ExtensionContext;
   return { calls, context };
@@ -234,8 +235,8 @@ const getHandler = (pi: RecordingHandlers, event: string): LifecycleHandler => {
   return handler;
 };
 
-const FOOTER_PATTERN = /DS v4-flash/;
-const BALANCE_SUFFIX_PATTERN = /balance \$5\.20/;
+const FOOTER_PATTERN = /^[☀☾] (?:peak|off-peak 50%)$/;
+const BALANCE_SUFFIX_PATTERN = / · \$5\.20$/;
 
 const asObject = (value: unknown): Record<string, unknown> => {
   assert.ok(
@@ -476,7 +477,7 @@ test("model_select clears the footer for a non-DeepSeek model", () => {
 const settle = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, 0));
 
-const BALANCE_UNAVAILABLE_PATTERN = /balance unavailable/;
+const BALANCE_UNAVAILABLE_PATTERN = / · unavailable$/;
 
 const usableBalance = (
   totalBalance: number,

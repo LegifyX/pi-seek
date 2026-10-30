@@ -16,7 +16,7 @@ import {
   type UsageCost,
   type UsageRecord,
 } from "./config.ts";
-import { formatPhase } from "./peak.ts";
+import { formatPhase, isPeak } from "./peak.ts";
 
 // ---------------------------------------------------------------------------
 // Telemetry store
@@ -200,25 +200,31 @@ export const createTelemetryStore = (
     if (!context) {
       return;
     }
-    if (
-      !runtimeState.enabled ||
-      context.model?.provider !== PROVIDER_ID ||
-      !lastUsage
-    ) {
+    if (!runtimeState.enabled || context.model?.provider !== PROVIDER_ID) {
       context.ui.setStatus(FOOTER_KEY, undefined);
       return;
     }
-    const cacheHit = (lastUsage.cacheRead / 1000).toFixed(1);
-    const cacheMiss = (lastUsage.input / 1000).toFixed(1);
-    const modelLabel = lastUsage.model.replace("deepseek-", "");
-    const status = `DS ${modelLabel} · cache ${cacheHit}K hit / ${cacheMiss}K miss · $${lastUsage.cost.total.toFixed(4)} · ${formatPhase()}`;
+    // This row carries what the host cannot know: the billing window and the
+    // wallet. Cache and cost already have segments of their own. The value is
+    // rendered verbatim by the statusline plugin, so it styles itself, and every
+    // run ends on a reset. See "extensionStatusRaw" in pi-statusline.
+    const { theme } = context.ui;
+    const peak = isPeak();
+    const phase = theme.fg(
+      peak ? "warning" : "success",
+      `${peak ? "☀" : "☾"} ${formatPhase()}`
+    );
+    // The label is the host's job: pi-statusline prefixes the status key, and a
+    // key listed in its extensionStatusRaw gets this value verbatim instead.
+    // Writing "ds" here too would double it in the first case.
+    const status = phase;
     context.ui.setStatus(FOOTER_KEY, status);
     if (!balance) {
       return;
     }
     // Fire-and-forget balance refresh (TTL-cached, at most one GET per TTL):
-    // the base status line is set synchronously and the balance suffix lands
-    // when the fetch settles; a failed fetch keeps the base line.
+    // the phase is set synchronously and the wallet lands when the fetch
+    // settles; a failed fetch keeps the phase-only line.
     balance
       .get()
       .then((state) => {
@@ -228,7 +234,10 @@ export const createTelemetryStore = (
         const balanceLabel = state.isAvailable
           ? formatBalance(state.entries)
           : "unavailable";
-        context.ui.setStatus(FOOTER_KEY, `${status} · balance ${balanceLabel}`);
+        context.ui.setStatus(
+          FOOTER_KEY,
+          `${status} · ${theme.fg("muted", balanceLabel)}`
+        );
       })
       .catch(() => undefined);
   };

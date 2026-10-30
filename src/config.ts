@@ -61,7 +61,7 @@ export const resolveTimeoutMs = (body: unknown): number => {
 };
 
 export const DEFAULT_EFFORT = "high";
-export const FOOTER_KEY = "ds-cache";
+export const FOOTER_KEY = "ds";
 export const THREADS_ENTRY = "ds-reply";
 export const CACHE_CARD_ENTRY = "ds-cache-card";
 export const BALANCE_ENTRY = "ds-balance-card";
