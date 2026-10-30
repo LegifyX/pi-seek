@@ -43,7 +43,23 @@ test("isPeak: the phase follows the UTC+8 calendar, not UTC", () => {
 
 test("formatPhase: renders the footer token", () => {
   assert.equal(formatPhase(at("2026-09-04T02:00:00Z")), "peak");
-  assert.equal(formatPhase(at("2026-09-04T10:00:00Z")), "off-peak 50%");
+  assert.equal(
+    formatPhase(at("2026-09-04T10:00:00Z")),
+    "off-peak 50% until 09:00"
+  );
+});
+
+// 04:30Z is 12:30 in UTC+8: the gap between the two windows, so the wait is the
+// 14:00 window rather than the next weekday morning.
+test("formatPhase: the off-peak end is the next window on the billing calendar", () => {
+  assert.equal(
+    formatPhase(at("2026-09-04T04:30:00Z")),
+    "off-peak 50% until 14:00"
+  );
+  assert.equal(
+    formatPhase(at("2026-09-05T04:00:00Z")),
+    "off-peak 50% until 09:00"
+  );
 });
 
 test("PEAK_RULE_NOTE explains the token shown in the footer", () => {

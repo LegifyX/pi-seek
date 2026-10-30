@@ -28,7 +28,7 @@ pi-seek adds one provider, six tools, and four commands to Pi.
 | `/ds-balance` | Shows the account balance of every currency, the billing phase, and the usage today. |
 | `/deepseek` | Opens the settings menu. Controls the integration and the default reasoning effort. |
 
-**Status line.** After each use, the status line shows the billing phase (`☾ off-peak 50%`, or `☀ peak`) and the remaining balance of every currency — `☾ off-peak 50% · $0.00 · ¥39.22`. The phase is coloured (green off-peak, amber peak) and is display-only: the reported cost stays on the peak rate. Colours survive only under `@signalridge/pi-statusline` with `"extensionStatusRaw": ["ds"]` set; without it the row still reads correctly, just uncoloured. Cache hit/miss and cost have their own statusline segments — `/ds-cache` shows them on demand.
+**Status line.** After each use, the status line shows the billing phase (`☾ off-peak 50% until 09:00`, or `☀ peak`) and the remaining balance of every currency — `☾ off-peak 50% until 09:00 · $0.00 · ¥39.22`. The `until` clock is the next window on DeepSeek's UTC+8 billing calendar, so it tells you when the peak rate resumes. The phase is coloured (green off-peak, amber peak) and is display-only: the reported cost stays on the peak rate. Colours survive only under `@signalridge/pi-statusline` with `"extensionStatusRaw": ["ds"]` set; without it the row still reads correctly, just uncoloured. Cache hit/miss and cost have their own statusline segments — `/ds-cache` shows them on demand.
 
 ## How pi-seek integrates DeepSeek
 

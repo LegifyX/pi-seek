@@ -44,6 +44,33 @@ export const isPeak = (instant: Date = new Date()): boolean => {
   );
 };
 
-// Footer token: "peak" or "off-peak 50%".
+// Footer token: "peak" or "off-peak 50% until HH:mm". The clock is read on the
+// billing calendar, so it matches the times in the pricing doc rather than the
+// user's timezone.
 export const formatPhase = (instant: Date = new Date()): string =>
-  isPeak(instant) ? "peak" : `off-peak ${OFF_PEAK_PERCENT}%`;
+  isPeak(instant)
+    ? "peak"
+    : `off-peak ${OFF_PEAK_PERCENT}% until ${clockTime(nextPeakStart(instant))}`;
+
+const clockTime = (instant: Date): string => {
+  const billing = new Date(
+    instant.getTime() + CALENDAR_OFFSET_MINUTES * MINUTE_MS
+  );
+  const hours = String(billing.getUTCHours()).padStart(2, "0");
+  const minutes = String(billing.getUTCMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+};
+
+// First whole minute that bills at the peak rate. Stepping through isPeak keeps
+// the answer in sync with the classification rule above by construction; the
+// worst gap (Friday 18:00 to Monday 09:00) is 4320 steps.
+const nextPeakStart = (instant: Date): Date => {
+  const from = Math.floor(instant.getTime() / MINUTE_MS) * MINUTE_MS;
+  for (const step of Array.from({ length: 10 * 24 * 60 }, (_, i) => i + 1)) {
+    const candidate = new Date(from + step * MINUTE_MS);
+    if (isPeak(candidate)) {
+      return candidate;
+    }
+  }
+  return new Date(from);
+};

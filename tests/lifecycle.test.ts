@@ -235,7 +235,7 @@ const getHandler = (pi: RecordingHandlers, event: string): LifecycleHandler => {
   return handler;
 };
 
-const FOOTER_PATTERN = /^[☀☾] (?:peak|off-peak 50%)$/;
+const FOOTER_PATTERN = /^[☀☾] (?:peak|off-peak 50% until \d\d:\d\d)$/;
 const BALANCE_SUFFIX_PATTERN = / · \$5\.20$/;
 
 const asObject = (value: unknown): Record<string, unknown> => {
