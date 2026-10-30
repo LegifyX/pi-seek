@@ -21,167 +21,6 @@ const jsonResponse = (body: unknown, status = 200): Response =>
     status,
   });
 
-test("parseBalance: normalizes the live-verified response shape", () => {
-  assert.deepEqual(
-    __test.parseBalance({
-      balance_infos: [
-        {
-          currency: "USD",
-          granted_balance: "0.00",
-          topped_up_balance: "24.62",
-          total_balance: "24.62",
-        },
-      ],
-      is_available: true,
-    }),
-    {
-      currency: "USD",
-      grantedBalance: 0,
-      isAvailable: true,
-      toppedUpBalance: 24.62,
-      totalBalance: 24.62,
-    }
-  );
-});
-
-test("parseBalance: prefers USD when multiple currencies are present", () => {
-  assert.deepEqual(
-    __test.parseBalance({
-      balance_infos: [
-        {
-          currency: "CNY",
-          granted_balance: "0.00",
-          topped_up_balance: "100.00",
-          total_balance: "100.00",
-        },
-        {
-          currency: "USD",
-          granted_balance: "1.00",
-          topped_up_balance: "10.00",
-          total_balance: "11.00",
-        },
-      ],
-      is_available: true,
-    }),
-    {
-      currency: "USD",
-      grantedBalance: 1,
-      isAvailable: true,
-      toppedUpBalance: 10,
-      totalBalance: 11,
-    }
-  );
-});
-
-test("parseBalance: falls back to the first entry without USD", () => {
-  const result = __test.parseBalance({
-    balance_infos: [
-      {
-        currency: "CNY",
-        granted_balance: "5.00",
-        topped_up_balance: "95.00",
-        total_balance: "100.00",
-      },
-    ],
-    is_available: true,
-  });
-  assert.equal(result.currency, "CNY");
-  assert.equal(result.totalBalance, 100);
-});
-
-test("parseBalance: missing fields and non-numeric amounts default to 0", () => {
-  // A partially malformed entry with at least one usable amount still parses
-  // and stays available; unparseable fields collapse to 0.
-  assert.deepEqual(
-    __test.parseBalance({
-      balance_infos: [
-        {
-          currency: "USD",
-          granted_balance: "abc",
-          topped_up_balance: undefined,
-          total_balance: "12.5",
-        },
-      ],
-    }),
-    {
-      currency: "USD",
-      grantedBalance: 0,
-      isAvailable: true,
-      toppedUpBalance: 0,
-      totalBalance: 12.5,
-    }
-  );
-  // A body with no usable balance info at all is unavailable, not a valid
-  // zero balance.
-  assert.deepEqual(__test.parseBalance(undefined), {
-    currency: "USD",
-    grantedBalance: 0,
-    isAvailable: false,
-    toppedUpBalance: 0,
-    totalBalance: 0,
-  });
-  assert.deepEqual(__test.parseBalance({}), {
-    currency: "USD",
-    grantedBalance: 0,
-    isAvailable: false,
-    toppedUpBalance: 0,
-    totalBalance: 0,
-  });
-});
-
-test("parseBalance: a valid zero balance stays available and distinct from unavailable", () => {
-  assert.deepEqual(
-    __test.parseBalance({
-      balance_infos: [
-        {
-          currency: "USD",
-          granted_balance: "0.00",
-          topped_up_balance: "0.00",
-          total_balance: "0.00",
-        },
-      ],
-      is_available: true,
-    }),
-    {
-      currency: "USD",
-      grantedBalance: 0,
-      isAvailable: true,
-      toppedUpBalance: 0,
-      totalBalance: 0,
-    }
-  );
-  // Every entry malformed: indistinguishable from a real zero except that
-  // the payload reports unavailable.
-  assert.deepEqual(
-    __test.parseBalance({
-      balance_infos: [
-        {
-          currency: "USD",
-          granted_balance: "not-a-number",
-          topped_up_balance: "also-bad",
-          total_balance: "nope",
-        },
-      ],
-      is_available: true,
-    }),
-    {
-      currency: "USD",
-      grantedBalance: 0,
-      isAvailable: false,
-      toppedUpBalance: 0,
-      totalBalance: 0,
-    }
-  );
-});
-
-test("parseBalance: preserves is_available false", () => {
-  const result = __test.parseBalance({
-    balance_infos: [],
-    is_available: false,
-  });
-  assert.equal(result.isAvailable, false);
-});
-
 test("balance store: fetches and normalizes with a fetchedAt stamp", async (t) => {
   globalThis.fetch = () =>
     Promise.resolve(
@@ -190,8 +29,14 @@ test("balance store: fetches and normalizes with a fetchedAt stamp", async (t) =
           {
             currency: "USD",
             granted_balance: "0.00",
-            topped_up_balance: "24.62",
-            total_balance: "24.62",
+            topped_up_balance: "0.00",
+            total_balance: "0.00",
+          },
+          {
+            currency: "CNY",
+            granted_balance: "0.00",
+            topped_up_balance: "39.22",
+            total_balance: "39.22",
           },
         ],
         is_available: true,
@@ -202,9 +47,13 @@ test("balance store: fetches and normalizes with a fetchedAt stamp", async (t) =
   });
   const balance = await makeStore().get();
   assert.equal(balance.isAvailable, true);
-  assert.equal(balance.currency, "USD");
-  assert.equal(balance.totalBalance, 24.62);
-  assert.equal(balance.toppedUpBalance, 24.62);
+  assert.deepEqual(
+    balance.entries.map((entry) => [entry.currency, entry.totalBalance]),
+    [
+      ["USD", 0],
+      ["CNY", 39.22],
+    ]
+  );
   assert.ok(balance.fetchedAt > 0);
 });
 
@@ -231,8 +80,8 @@ test("balance store: refreshes after the TTL expires", async (t) => {
   const first = await store.get();
   balance = "20.00";
   const second = await store.get();
-  assert.equal(first.totalBalance, 10);
-  assert.equal(second.totalBalance, 20);
+  assert.equal(first.entries[0]?.totalBalance, 10);
+  assert.equal(second.entries[0]?.totalBalance, 20);
 });
 
 test("balance store: unavailable payload surfaces as isAvailable false", async (t) => {
@@ -255,10 +104,10 @@ test("balance store: unavailable payload surfaces as isAvailable false", async (
   });
   const balance = await makeStore().get();
   assert.equal(balance.isAvailable, false);
-  assert.equal(balance.totalBalance, 0);
+  assert.equal(balance.entries[0]?.totalBalance, 0);
 });
 
-test("balance store: malformed payload yields finite numbers and unavailable state", async (t) => {
+test("balance store: malformed payload yields no entries and unavailable state", async (t) => {
   globalThis.fetch = () =>
     Promise.resolve(
       jsonResponse({
@@ -277,9 +126,7 @@ test("balance store: malformed payload yields finite numbers and unavailable sta
   });
   const balance = await makeStore().get();
   assert.equal(balance.isAvailable, false);
-  assert.ok(Number.isFinite(balance.grantedBalance));
-  assert.ok(Number.isFinite(balance.toppedUpBalance));
-  assert.ok(Number.isFinite(balance.totalBalance));
+  assert.deepEqual(balance.entries, []);
   assert.ok(Number.isFinite(balance.fetchedAt));
 });
 

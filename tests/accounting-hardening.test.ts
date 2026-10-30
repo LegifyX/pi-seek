@@ -422,8 +422,8 @@ test("balance store: TTL refresh fetches a fresh value after expiry", async () =
   const first = await store.get();
   harness.enqueue(balanceBody("20.00"));
   const second = await store.get();
-  assert.equal(first.totalBalance, 10);
-  assert.equal(second.totalBalance, 20);
+  assert.equal(first.entries[0]?.totalBalance, 10);
+  assert.equal(second.entries[0]?.totalBalance, 20);
 });
 
 test("balance store: cached value is served inside the TTL without refetching", async () => {
@@ -433,8 +433,8 @@ test("balance store: cached value is served inside the TTL without refetching", 
   harness.enqueue(balanceBody("20.00"));
   const first = await store.get();
   const second = await store.get();
-  assert.equal(first.totalBalance, 10);
-  assert.equal(second.totalBalance, 10);
+  assert.equal(first.entries[0]?.totalBalance, 10);
+  assert.equal(second.entries[0]?.totalBalance, 10);
 });
 
 test("balance store: stale value is kept and the refresh failure rethrows", async () => {
@@ -453,7 +453,7 @@ test("balance store: unavailable payload carries isAvailable false", async () =>
   harness.enqueue(balanceBody("0.00", false));
   const balance = await store.get();
   assert.equal(balance.isAvailable, false);
-  assert.equal(balance.totalBalance, 0);
+  assert.equal(balance.entries[0]?.totalBalance, 0);
 });
 
 test("balance store: valid zero balance stays available and finite", async () => {
@@ -462,8 +462,8 @@ test("balance store: valid zero balance stays available and finite", async () =>
   harness.enqueue(balanceBody("0.00", true));
   const balance = await store.get();
   assert.equal(balance.isAvailable, true);
-  assert.equal(balance.totalBalance, 0);
-  assert.ok(Number.isFinite(balance.totalBalance));
+  assert.equal(balance.entries[0]?.totalBalance, 0);
+  assert.ok(Number.isFinite(balance.entries[0]?.totalBalance));
 });
 
 test("balance store: malformed payload yields finite numbers and unavailable state", async () => {
@@ -481,21 +481,16 @@ test("balance store: malformed payload yields finite numbers and unavailable sta
   });
   const balance = await store.get();
   assert.equal(balance.isAvailable, false);
-  for (const value of [
-    balance.grantedBalance,
-    balance.toppedUpBalance,
-    balance.totalBalance,
-    balance.fetchedAt,
-  ]) {
-    assert.ok(Number.isFinite(value));
-  }
+  assert.deepEqual(balance.entries, []);
+  assert.ok(Number.isFinite(balance.fetchedAt));
 });
 
-test("balance store: non-object payload yields finite unavailable state", async () => {
+test("balance store: non-object payload yields an empty unavailable state", () => {
   const harness = makeBalanceHttp();
   const store = createBalanceStore(harness.http);
   harness.enqueue("definitely not a balance payload");
-  const balance = await store.get();
-  assert.equal(balance.isAvailable, false);
-  assert.ok(Number.isFinite(balance.totalBalance));
+  return store.get().then((balance) => {
+    assert.equal(balance.isAvailable, false);
+    assert.deepEqual(balance.entries, []);
+  });
 });

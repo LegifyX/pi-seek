@@ -2,9 +2,9 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BalanceStore } from "./balance.ts";
 import {
   costForModel,
-  currencySymbol,
   type DeepSeekRuntimeState,
   FOOTER_KEY,
+  formatBalance,
   getNumber,
   getObject,
   isJsonObject,
@@ -16,6 +16,7 @@ import {
   type UsageCost,
   type UsageRecord,
 } from "./config.ts";
+import { formatPhase } from "./peak.ts";
 
 // ---------------------------------------------------------------------------
 // Telemetry store
@@ -210,7 +211,7 @@ export const createTelemetryStore = (
     const cacheHit = (lastUsage.cacheRead / 1000).toFixed(1);
     const cacheMiss = (lastUsage.input / 1000).toFixed(1);
     const modelLabel = lastUsage.model.replace("deepseek-", "");
-    const status = `DS ${modelLabel} · cache ${cacheHit}K hit / ${cacheMiss}K miss · $${lastUsage.cost.total.toFixed(4)}`;
+    const status = `DS ${modelLabel} · cache ${cacheHit}K hit / ${cacheMiss}K miss · $${lastUsage.cost.total.toFixed(4)} · ${formatPhase()}`;
     context.ui.setStatus(FOOTER_KEY, status);
     if (!balance) {
       return;
@@ -225,7 +226,7 @@ export const createTelemetryStore = (
           return;
         }
         const balanceLabel = state.isAvailable
-          ? `${currencySymbol(state.currency)}${state.totalBalance.toFixed(2)}`
+          ? formatBalance(state.entries)
           : "unavailable";
         context.ui.setStatus(FOOTER_KEY, `${status} · balance ${balanceLabel}`);
       })

@@ -2,11 +2,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import {
   BALANCE_ENTRY,
+  type BalanceEntry,
   CACHE_CARD_ENTRY,
   currencySymbol,
   THREADS_ENTRY,
   type UsageRecord,
 } from "./config.ts";
+import { formatPhase, PEAK_RULE_NOTE } from "./peak.ts";
 
 // ---------------------------------------------------------------------------
 // Entry renderers
@@ -120,16 +122,13 @@ export const registerRenderers = (pi: ExtensionAPI): void => {
   });
 
   pi.registerEntryRenderer<{
-    currency: string;
+    entries: BalanceEntry[];
     fetchedAt: number;
-    grantedBalance: number;
     isAvailable: boolean;
     sessionCalls: number;
     sessionCostTotal: number;
     todayCalls: number;
     todayCostTotal: number;
-    toppedUpBalance: number;
-    totalBalance: number;
     ts: number;
   }>(BALANCE_ENTRY, (entry, { expanded }, theme) => {
     const { data } = entry;
@@ -137,30 +136,27 @@ export const registerRenderers = (pi: ExtensionAPI): void => {
     if (!data) {
       return box;
     }
-    const symbol = currencySymbol(data.currency);
     const status = data.isAvailable
       ? theme.fg("success", "available")
       : theme.fg("error", "INSUFFICIENT BALANCE");
     box.addChild(
       new Text(
-        `${theme.fg("accent", "[ds-balance]")} ${status} · ${symbol}${data.totalBalance.toFixed(2)}`,
+        `${theme.fg("accent", "[ds-balance]")} ${status} · ${formatPhase()}`,
         0,
         0
       )
     );
+    for (const balance of data.entries) {
+      const symbol = currencySymbol(balance.currency);
+      box.addChild(
+        new Text(
+          `${symbol}${balance.totalBalance.toFixed(2)} ${balance.currency} (granted ${symbol}${balance.grantedBalance.toFixed(2)} · topped up ${symbol}${balance.toppedUpBalance.toFixed(2)})`,
+          0,
+          0
+        )
+      );
+    }
     if (expanded) {
-      if (data.grantedBalance > 0 || data.toppedUpBalance > 0) {
-        box.addChild(
-          new Text(
-            theme.fg(
-              "muted",
-              `granted ${symbol}${data.grantedBalance.toFixed(2)} · topped up ${symbol}${data.toppedUpBalance.toFixed(2)}`
-            ),
-            0,
-            0
-          )
-        );
-      }
       if (data.sessionCalls > 0) {
         box.addChild(
           new Text(
@@ -177,7 +173,7 @@ export const registerRenderers = (pi: ExtensionAPI): void => {
         new Text(
           theme.fg(
             "muted",
-            `updated ${new Date(data.fetchedAt).toLocaleTimeString()}`
+            `updated ${new Date(data.fetchedAt).toLocaleTimeString()} · ${PEAK_RULE_NOTE}`
           ),
           0,
           0

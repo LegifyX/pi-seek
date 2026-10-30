@@ -229,13 +229,17 @@ interface RawBalanceInfo {
   totalBalance?: number;
 }
 
-export interface BalanceState {
+export interface BalanceEntry {
   currency: string;
-  fetchedAt: number;
   grantedBalance: number;
-  isAvailable: boolean;
   toppedUpBalance: number;
   totalBalance: number;
+}
+
+export interface BalanceState {
+  entries: BalanceEntry[];
+  fetchedAt: number;
+  isAvailable: boolean;
 }
 
 export interface UsageSummary {
@@ -256,39 +260,53 @@ const parseAmount = (value: unknown): number | undefined => {
     : undefined;
 };
 
-// Balance amounts arrive as strings ("24.62"); parse defensively and prefer
-// the USD entry when an account carries multiple currencies. Unparseable
-// amounts normalize to 0, but a payload with no usable balance info at all
-// (a non-object body, absent/empty balance_infos, every entry malformed) or
-// an explicit is_available:false reports as unavailable, so a valid zero
-// balance stays distinguishable from a malformed response.
+// Balance amounts arrive as strings ("24.62"); parse defensively and keep
+// every currency entry, because an account funded in CNY reports USD 0.00
+// alongside real credit. Unparseable amounts normalize to 0 inside a kept
+// entry, but a payload with no usable balance info at all (a non-object body,
+// absent/empty balance_infos, every entry malformed) or an explicit
+// is_available:false reports as unavailable, so a valid zero balance stays
+// distinguishable from a malformed response.
 export const parseBalance = (raw: unknown): Omit<BalanceState, "fetchedAt"> => {
   const body = isJsonObject(raw) ? raw : {};
-  const entries: RawBalanceInfo[] = getArray(body, "balance_infos")
+  const entries: BalanceEntry[] = getArray(body, "balance_infos")
     .filter(isJsonObject)
-    .map((info) => ({
-      currency: getString(info, "currency") ?? "USD",
-      grantedBalance: parseAmount(info.granted_balance),
-      toppedUpBalance: parseAmount(info.topped_up_balance),
-      totalBalance: parseAmount(info.total_balance),
+    .map(
+      (info): RawBalanceInfo => ({
+        currency: getString(info, "currency") ?? "USD",
+        grantedBalance: parseAmount(info.granted_balance),
+        toppedUpBalance: parseAmount(info.topped_up_balance),
+        totalBalance: parseAmount(info.total_balance),
+      })
+    )
+    .filter(
+      (entry) =>
+        entry.grantedBalance !== undefined ||
+        entry.toppedUpBalance !== undefined ||
+        entry.totalBalance !== undefined
+    )
+    .map((entry) => ({
+      currency: entry.currency,
+      grantedBalance: entry.grantedBalance ?? 0,
+      toppedUpBalance: entry.toppedUpBalance ?? 0,
+      totalBalance: entry.totalBalance ?? 0,
     }));
-  const hasUsableEntry = entries.some(
-    (entry) =>
-      entry.grantedBalance !== undefined ||
-      entry.toppedUpBalance !== undefined ||
-      entry.totalBalance !== undefined
-  );
-  const preferred =
-    entries.find((entry) => entry.currency === "USD") ?? entries[0];
-  const isAvailable = body.is_available !== false && hasUsableEntry;
   return {
-    currency: preferred?.currency ?? "USD",
-    grantedBalance: preferred?.grantedBalance ?? 0,
-    isAvailable,
-    toppedUpBalance: preferred?.toppedUpBalance ?? 0,
-    totalBalance: preferred?.totalBalance ?? 0,
+    entries,
+    isAvailable: body.is_available !== false && entries.length > 0,
   };
 };
+
+// "$0.00 · ¥39.22" — every currency the account holds, in the API's order.
+export const formatBalance = (entries: BalanceEntry[]): string =>
+  entries.length === 0
+    ? "unavailable"
+    : entries
+        .map(
+          (entry) =>
+            `${currencySymbol(entry.currency)}${entry.totalBalance.toFixed(2)}`
+        )
+        .join(" · ");
 
 export const currencySymbol = (currency: string): string => {
   if (currency === "USD") {

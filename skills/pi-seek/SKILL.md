@@ -111,6 +111,6 @@ The four commands are typed by the user; recommend them rather than faking them:
   when a tool returns the disabled result.
 - `/ds <prompt>` — one-shot chat, no thread.
 - `/ds-cache` — KV-cache hit/miss tokens and cost of the last request.
-- `/ds-balance` — remaining account balance plus usage today and this session (60s TTL, falls back to the cached value on fetch failure).
+- `/ds-balance` — remaining account balance for every currency the account holds (USD and CNY are listed side by side), the current billing phase, and usage today and this session (60s TTL, falls back to the cached value on fetch failure).
 
-The status line (footer) shows the remaining balance after DeepSeek usage — `DS v4-flash` or `DS v4-pro` · cache … · $cost · balance $N` — refreshed at most every 60s; `balance unavailable` when the account reports no usable balance. Open `/ds-balance` for the full card.
+The status line (footer) shows the remaining balance after DeepSeek usage — `DS v4-flash` or `DS v4-pro` · cache … · $cost · peak` (or `off-peak 50%`) `· balance $0.00 · ¥39.22` — refreshed at most every 60s; `balance unavailable` when the account reports no usable balance. The phase marks DeepSeek's billing windows (peak Mon-Fri 09:00-12:00 and 14:00-18:00 UTC+8, off-peak 50%, weekends off-peak) and is display-only: the reported cost stays on the peak rate. Open `/ds-balance` for the full card.

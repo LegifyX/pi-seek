@@ -484,12 +484,16 @@ const usableBalance = (
 ): BalanceStore => ({
   get: () =>
     Promise.resolve({
-      currency: "USD",
+      entries: [
+        {
+          currency: "USD",
+          grantedBalance: 0,
+          toppedUpBalance: 0,
+          totalBalance,
+        },
+      ],
       fetchedAt: Date.now(),
-      grantedBalance: 0,
       isAvailable,
-      toppedUpBalance: 0,
-      totalBalance,
     }),
   peek: () => null,
 });

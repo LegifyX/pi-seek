@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseBalance } from "../src/config.ts";
+import { formatBalance, parseBalance } from "../src/config.ts";
 
 const validPayload = () => ({
   balance_infos: [
@@ -16,11 +16,15 @@ const validPayload = () => ({
 
 test("parseBalance: normalizes a valid payload", () => {
   assert.deepEqual(parseBalance(validPayload()), {
-    currency: "USD",
-    grantedBalance: 0,
+    entries: [
+      {
+        currency: "USD",
+        grantedBalance: 0,
+        toppedUpBalance: 24.62,
+        totalBalance: 24.62,
+      },
+    ],
     isAvailable: true,
-    toppedUpBalance: 24.62,
-    totalBalance: 24.62,
   });
 });
 
@@ -37,12 +41,12 @@ test("parseBalance: a real zero balance is available", () => {
     is_available: true,
   });
   assert.equal(result.isAvailable, true);
-  assert.equal(result.grantedBalance, 0);
-  assert.equal(result.toppedUpBalance, 0);
-  assert.equal(result.totalBalance, 0);
+  assert.deepEqual(result.entries, [
+    { currency: "USD", grantedBalance: 0, toppedUpBalance: 0, totalBalance: 0 },
+  ]);
 });
 
-test("parseBalance: all-malformed entries are unavailable but still zero", () => {
+test("parseBalance: all-malformed entries are unavailable and list nothing", () => {
   const result = parseBalance({
     balance_infos: [
       {
@@ -55,9 +59,7 @@ test("parseBalance: all-malformed entries are unavailable but still zero", () =>
     is_available: true,
   });
   assert.equal(result.isAvailable, false);
-  assert.equal(result.grantedBalance, 0);
-  assert.equal(result.toppedUpBalance, 0);
-  assert.equal(result.totalBalance, 0);
+  assert.deepEqual(result.entries, []);
 });
 
 test("parseBalance: absent balance_infos is unavailable", () => {
@@ -67,8 +69,7 @@ test("parseBalance: absent balance_infos is unavailable", () => {
   assert.equal(parseBalance("not an object").isAvailable, false);
   const empty = parseBalance({ balance_infos: [] });
   assert.equal(empty.isAvailable, false);
-  assert.equal(empty.currency, "USD");
-  assert.equal(empty.totalBalance, 0);
+  assert.deepEqual(empty.entries, []);
 });
 
 test("parseBalance: injected NaN and Infinity never leak", () => {
@@ -84,9 +85,7 @@ test("parseBalance: injected NaN and Infinity never leak", () => {
     is_available: true,
   });
   assert.equal(result.isAvailable, false);
-  assert.equal(result.grantedBalance, 0);
-  assert.equal(result.toppedUpBalance, 0);
-  assert.equal(result.totalBalance, 0);
+  assert.deepEqual(result.entries, []);
 });
 
 test("parseBalance: is_available false wins even with valid amounts", () => {
@@ -95,31 +94,39 @@ test("parseBalance: is_available false wins even with valid amounts", () => {
     is_available: false,
   });
   assert.equal(result.isAvailable, false);
-  assert.equal(result.totalBalance, 24.62);
+  assert.equal(result.entries[0]?.totalBalance, 24.62);
 });
 
-test("parseBalance: prefers USD over other currencies", () => {
+// The live account this extension was debugged against reports USD 0.00 first
+// and the funded CNY entry second; keeping only one entry hid the real credit.
+test("parseBalance: keeps every currency entry in the API's order", () => {
   const result = parseBalance({
     balance_infos: [
       {
-        currency: "CNY",
+        currency: "USD",
         granted_balance: "0.00",
-        topped_up_balance: "100.00",
-        total_balance: "100.00",
+        topped_up_balance: "0.00",
+        total_balance: "0.00",
       },
       {
-        currency: "USD",
-        granted_balance: "1.00",
-        topped_up_balance: "10.00",
-        total_balance: "11.00",
+        currency: "CNY",
+        granted_balance: "0.00",
+        topped_up_balance: "39.22",
+        total_balance: "39.22",
       },
     ],
     is_available: true,
   });
-  assert.equal(result.currency, "USD");
-  assert.equal(result.grantedBalance, 1);
-  assert.equal(result.toppedUpBalance, 10);
-  assert.equal(result.totalBalance, 11);
+  assert.equal(result.isAvailable, true);
+  assert.deepEqual(result.entries, [
+    { currency: "USD", grantedBalance: 0, toppedUpBalance: 0, totalBalance: 0 },
+    {
+      currency: "CNY",
+      grantedBalance: 0,
+      toppedUpBalance: 39.22,
+      totalBalance: 39.22,
+    },
+  ]);
 });
 
 test("parseBalance: negative finite amounts are preserved", () => {
@@ -135,9 +142,14 @@ test("parseBalance: negative finite amounts are preserved", () => {
     is_available: true,
   });
   assert.equal(result.isAvailable, true);
-  assert.equal(result.grantedBalance, -5);
-  assert.equal(result.toppedUpBalance, -0.5);
-  assert.equal(result.totalBalance, -5.5);
+  assert.deepEqual(result.entries, [
+    {
+      currency: "USD",
+      grantedBalance: -5,
+      toppedUpBalance: -0.5,
+      totalBalance: -5.5,
+    },
+  ]);
 });
 
 test("parseBalance: numeric fields are always finite", () => {
@@ -155,16 +167,50 @@ test("parseBalance: numeric fields are always finite", () => {
     { balance_infos: [{ currency: "USD", total_balance: "-12.5" }] },
   ];
   for (const payload of payloads) {
-    const result = parseBalance(payload);
-    for (const field of [
-      "grantedBalance",
-      "toppedUpBalance",
-      "totalBalance",
-    ] as const) {
-      assert.ok(
-        Number.isFinite(result[field]),
-        `${field} must be finite for ${JSON.stringify(payload)}`
-      );
+    const { entries } = parseBalance(payload);
+    for (const entry of entries) {
+      for (const field of [
+        "grantedBalance",
+        "toppedUpBalance",
+        "totalBalance",
+      ] as const) {
+        assert.ok(
+          Number.isFinite(entry[field]),
+          `${field} must be finite for ${JSON.stringify(payload)}`
+        );
+      }
     }
   }
+});
+
+test("formatBalance: joins every entry and reports unavailable when empty", () => {
+  assert.equal(formatBalance([]), "unavailable");
+  assert.equal(
+    formatBalance([
+      {
+        currency: "USD",
+        grantedBalance: 0,
+        toppedUpBalance: 0,
+        totalBalance: 0,
+      },
+      {
+        currency: "CNY",
+        grantedBalance: 0,
+        toppedUpBalance: 39.22,
+        totalBalance: 39.22,
+      },
+    ]),
+    "$0.00 · ¥39.22"
+  );
+  assert.equal(
+    formatBalance([
+      {
+        currency: "EUR",
+        grantedBalance: 0,
+        toppedUpBalance: 1,
+        totalBalance: 1,
+      },
+    ]),
+    "EUR 1.00"
+  );
 });

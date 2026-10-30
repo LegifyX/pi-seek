@@ -21,7 +21,7 @@ import {
   prependTimeNote,
   systemHasTimeNote,
 } from "./config.ts";
-import { createAuthService, createHttpClient, interpolateEnv } from "./http.ts";
+import { createAuthService, createHttpClient } from "./http.ts";
 import {
   applyDefaultReasoningEffort,
   registerLifecycleHandlers,
@@ -78,7 +78,6 @@ export const __test = {
   extractRequiredFunctionCall,
   extractResponsesText,
   formatTimeNote,
-  interpolateEnv,
   isContextLengthError,
   isPersistableItem,
   parseBalance,

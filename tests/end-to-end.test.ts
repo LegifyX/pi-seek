@@ -43,20 +43,20 @@ import type { ThreadStore } from "../src/threads.ts";
 import { createThreadStore } from "../src/threads.ts";
 import { registerTools, type ToolServices } from "../src/tools.ts";
 import {
+  AUTH_JSON_FIXTURE,
   balanceResponse,
   chatCompletionResponse,
   completionResponse,
   E2E_API_KEY,
   functionCallCompletion,
-  MODELS_JSON_FIXTURE,
   responsesChatCompleted,
   responsesWebSearchCompleted,
 } from "./fixtures/end-to-end.fixture.ts";
 
 // The auth service prioritizes the DEEPSEEK_API_KEY env var over the injected
-// models.json fixture. Tests must stay hermetic and must never read a real
+// auth.json fixture. Tests must stay hermetic and must never read a real
 // ambient key, so the variable is cleared for this (isolated) test process;
-// the models.json fixture path is what the assertions exercise.
+// the auth.json fixture is what the assertions exercise.
 before(() => {
   delete process.env.DEEPSEEK_API_KEY;
 });
@@ -269,7 +269,7 @@ const createHarness = (): Harness => {
   const transport = createMockTransport();
   const auth = createAuthService({
     agentDir: "/fake/agent",
-    readFile: async () => MODELS_JSON_FIXTURE,
+    readFile: async () => AUTH_JSON_FIXTURE,
   });
   const http = createHttpClient(auth);
   const runtimeState = createRuntimeState();
@@ -870,6 +870,12 @@ test("balance.get issues a bearer-authed GET to /user/balance", async (t) => {
   assert.equal(request.url, "https://api.deepseek.com/user/balance");
   assert.equal(request.headers.get("authorization"), `Bearer ${E2E_API_KEY}`);
   assert.equal(state.isAvailable, true);
-  assert.equal(state.currency, "USD");
-  assert.equal(state.totalBalance, 25.62);
+  assert.deepEqual(state.entries, [
+    {
+      currency: "USD",
+      grantedBalance: 1,
+      toppedUpBalance: 24.62,
+      totalBalance: 25.62,
+    },
+  ]);
 });

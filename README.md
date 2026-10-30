@@ -25,14 +25,14 @@ pi-seek adds one provider, six tools, and four commands to Pi.
 |---|---|
 | `/ds` | Starts a chat that does not keep history. |
 | `/ds-cache` | Shows the cache hit and miss tokens of the last request. Shows the cost. |
-| `/ds-balance` | Shows the account balance and the usage today. |
+| `/ds-balance` | Shows the account balance of every currency, the billing phase, and the usage today. |
 | `/deepseek` | Opens the settings menu. Controls the integration and the default reasoning effort. |
 
-**Status line.** After each use, the status line shows the cache hit and miss, the cost of the last request, and the remaining balance.
+**Status line.** After each use, the status line shows the cache hit and miss, the cost of the last request, the billing phase (`peak`, or `off-peak 50%`), and the remaining balance of every currency.
 
 ## How pi-seek integrates DeepSeek
 
-**Authentication.** pi-seek reads the API key from two places. The first place is the environment variable `DEEPSEEK_API_KEY`. The second place is the `models.json` file. pi-seek sends the key in the `Authorization` header of each request.
+**Authentication.** pi-seek reads the API key from two places. The first place is the environment variable `DEEPSEEK_API_KEY`. The second place is the `deepseek-responses` entry of pi's own `auth.json`, falling back to pi's built-in `deepseek` entry, so an account already logged in with pi works without extra setup. pi-seek sends the key in the `Authorization` header of each request.
 
 **Endpoints.** pi-seek uses the Responses API for chat and for web search. It uses the beta API for prefix completion and for FIM.
 
@@ -95,7 +95,7 @@ pi install /path/to/pi-seek
 pi -e npm:@juvio15/pi-seek
 ```
 
-**Set the API key.** Set the environment variable `DEEPSEEK_API_KEY`. Or add the `apiKey` for the `deepseek-responses` provider to the `models.json` file.
+**Set the API key.** Sign in with pi (`pi` then `/login`) for the `deepseek` or `deepseek-responses` provider, or set the environment variable `DEEPSEEK_API_KEY`.
 
 ## Configuration
 
@@ -109,6 +109,7 @@ pi -e npm:@juvio15/pi-seek
 ## Notes
 
 - Each tool call is a paid DeepSeek API request. Keep `max_output_tokens` small for tests.
+- The billing phase is display-only: DeepSeek charges a 50% discount off-peak, but the reported cost stays on the peak rate.
 - The FIM tool has a maximum of 4096 output tokens.
 - `ds_call_function` uses non-thinking mode. DeepSeek rejects a forced tool choice in thinking mode.
 - Do not put the API key in source code or in log files.

@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // End-to-end fixtures
 //
-// Shared fixture data for tests/end-to-end.test.ts: a models.json auth
-// fixture, the fake key it resolves to, and JSON bodies for every endpoint
-// the extension can reach. Everything here is a mock — no real credentials,
-// no live API access.
+// Shared fixture data for tests/end-to-end.test.ts: an auth.json fixture, the
+// fake key it resolves to, and JSON bodies for every endpoint the extension
+// can reach. Everything here is a mock — no real credentials, no live API
+// access.
 // ---------------------------------------------------------------------------
 
 import type { JsonObject } from "../../src/config.ts";
@@ -14,10 +14,8 @@ import type { JsonObject } from "../../src/config.ts";
 // constant without ever printing it.
 export const E2E_API_KEY = "e2e-fixture-key";
 
-export const MODELS_JSON_FIXTURE: string = JSON.stringify({
-  providers: {
-    "deepseek-responses": { apiKey: E2E_API_KEY },
-  },
+export const AUTH_JSON_FIXTURE: string = JSON.stringify({
+  "deepseek-responses": { key: E2E_API_KEY, type: "api_key" },
 });
 
 // Responses API: a completed response carrying one assistant message plus a

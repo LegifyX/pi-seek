@@ -176,37 +176,47 @@ test("ds-cache-card: history aggregate is omitted when only one request exists",
   assert.ok(expanded.every((line) => !line.includes("requests this session")));
 });
 
-test("ds-balance-card: compact view shows only the status header", () => {
+test("ds-balance-card: lists every currency, header carries the billing phase", () => {
   const { pi, renderers } = createRecordingPi();
   registerRenderers(pi);
   const renderer = rendererFor(renderers, BALANCE_ENTRY);
   const data = {
-    currency: "USD",
+    entries: [
+      {
+        currency: "USD",
+        grantedBalance: 0,
+        toppedUpBalance: 0,
+        totalBalance: 0,
+      },
+      {
+        currency: "CNY",
+        grantedBalance: 0,
+        toppedUpBalance: 39.22,
+        totalBalance: 39.22,
+      },
+    ],
     fetchedAt: 2000,
-    grantedBalance: 5,
     isAvailable: true,
     sessionCalls: 3,
     sessionCostTotal: 0.1,
     todayCalls: 10,
     todayCostTotal: 0.5,
-    toppedUpBalance: 20,
-    totalBalance: 25,
     ts: 1,
   };
 
   const compact = contentLines(renderLines(renderer, data, false));
-  assert.equal(compact.length, 1);
-  assert.ok(hasLine(compact, "[ds-balance] available · $25.00"));
-  assert.ok(compact.every((line) => !line.includes("granted")));
+  assert.equal(compact.length, 3);
+  assert.ok(compact.some((line) => line.includes("[ds-balance] available · ")));
+  assert.ok(hasLine(compact, "$0.00 USD (granted $0.00 · topped up $0.00)"));
+  assert.ok(hasLine(compact, "¥39.22 CNY (granted ¥0.00 · topped up ¥39.22)"));
   assert.ok(compact.every((line) => !line.includes("usage today")));
   assert.ok(compact.every((line) => !line.includes("updated")));
 
   const expanded = contentLines(renderLines(renderer, data, true));
-  assert.equal(expanded.length, 4);
-  assert.ok(hasLine(expanded, "[ds-balance] available · $25.00"));
-  assert.ok(hasLine(expanded, "granted $5.00 · topped up $20.00"));
+  assert.equal(expanded.length, 5);
   assert.ok(hasLine(expanded, "usage today 10 calls"));
-  assert.ok(hasLine(expanded, "updated"));
+  assert.ok(expanded.some((line) => line.includes("updated")));
+  assert.ok(expanded.some((line) => line.includes("peak Mon-Fri")));
 });
 
 test("ds-balance-card: insufficient balance renders the error status", () => {
@@ -214,21 +224,22 @@ test("ds-balance-card: insufficient balance renders the error status", () => {
   registerRenderers(pi);
   const renderer = rendererFor(renderers, BALANCE_ENTRY);
   const data = {
-    currency: "USD",
+    entries: [],
     fetchedAt: 2000,
-    grantedBalance: 0,
     isAvailable: false,
     sessionCalls: 0,
     sessionCostTotal: 0,
     todayCalls: 0,
     todayCostTotal: 0,
-    toppedUpBalance: 0,
-    totalBalance: 0,
     ts: 1,
   };
 
   const expanded = contentLines(renderLines(renderer, data, true));
   assert.equal(expanded.length, 2);
-  assert.ok(hasLine(expanded, "[ds-balance] INSUFFICIENT BALANCE · $0.00"));
+  assert.ok(
+    expanded.some((line) =>
+      line.includes("[ds-balance] INSUFFICIENT BALANCE · ")
+    )
+  );
   assert.ok(hasLine(expanded, "updated"));
 });

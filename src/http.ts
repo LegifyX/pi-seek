@@ -16,17 +16,42 @@ interface AuthService {
   resolveApiKey: () => Promise<string>;
 }
 
-// models.json may hold a `${NAME}` placeholder instead of a literal key; the
-// README documents `${DEEPSEEK_API_KEY}` as valid, so resolve such values
-// against process.env before use.
-const ENV_PLACEHOLDER_REGEX = /^\$\{([A-Z][A-Z0-9_]*)\}$/;
+// pi keeps provider credentials in <agentDir>/auth.json as
+// { "<provider>": { "type": "api_key", "key": "sk-..." } }. pi-seek registers
+// the "deepseek-responses" provider, but the same account is usually logged in
+// as pi's built-in "deepseek" provider, so that id is accepted too.
+const AUTH_PROVIDER_IDS = [PROVIDER_ID, "deepseek"] as const;
 
-export const interpolateEnv = (value: string): string | undefined => {
-  const match = ENV_PLACEHOLDER_REGEX.exec(value);
-  if (!match) {
-    return value;
+interface AuthFileEntry {
+  key?: unknown;
+}
+
+const readKeyFromAuthFile = async (
+  readAuthFile: (path: string) => Promise<string>,
+  agentDir: string
+): Promise<string | undefined> => {
+  let raw: string | undefined;
+  try {
+    raw = await readAuthFile(join(agentDir, "auth.json"));
+  } catch {
+    // A missing or unreadable auth.json falls through to the guidance error.
+    return;
   }
-  return process.env[match[1]]?.trim() || undefined;
+  if (!raw) {
+    return;
+  }
+  let authFile: Record<string, AuthFileEntry>;
+  try {
+    authFile = JSON.parse(raw) as Record<string, AuthFileEntry>;
+  } catch {
+    return;
+  }
+  for (const providerId of AUTH_PROVIDER_IDS) {
+    const key = authFile[providerId]?.key;
+    if (typeof key === "string" && key.trim()) {
+      return key.trim();
+    }
+  }
 };
 
 export const createAuthService = (deps?: {
@@ -34,7 +59,7 @@ export const createAuthService = (deps?: {
   readFile?: (path: string) => Promise<string>;
 }): AuthService => {
   const agentDir = deps?.agentDir ?? getAgentDir();
-  const readConfigFile =
+  const readAuthFile =
     deps?.readFile ?? ((path: string) => readFile(path, "utf8"));
   let cachedKey: string | undefined;
 
@@ -49,25 +74,14 @@ export const createAuthService = (deps?: {
       return environmentKey;
     }
 
-    try {
-      const rawConfig = await readConfigFile(join(agentDir, "models.json"));
-      const config = JSON.parse(rawConfig) as {
-        providers?: Record<string, { apiKey?: string }>;
-      };
-      const configuredKey = config.providers?.[PROVIDER_ID]?.apiKey?.trim();
-      if (configuredKey) {
-        const interpolated = interpolateEnv(configuredKey);
-        if (interpolated) {
-          cachedKey = interpolated;
-          return interpolated;
-        }
-      }
-    } catch {
-      // The error below gives the user both supported key locations.
+    const authKey = await readKeyFromAuthFile(readAuthFile, agentDir);
+    if (authKey) {
+      cachedKey = authKey;
+      return authKey;
     }
 
     throw new Error(
-      `DeepSeek API key not found: set ${API_KEY_ENV} (or configure an apiKey for the "${PROVIDER_ID}" provider in models.json).`
+      `DeepSeek API key not found: set ${API_KEY_ENV}, or sign in with pi so ${join(agentDir, "auth.json")} holds an API key for the "${PROVIDER_ID}" or "deepseek" provider.`
     );
   };
 
