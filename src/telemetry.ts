@@ -11,11 +11,12 @@ import {
   MODEL_ID,
   type PendingUsageRecord,
   TOKENS_PER_MILLION,
+  type TokenCost,
   USAGE_HISTORY_LIMIT,
   type UsageCost,
   type UsageRecord,
 } from "./config.ts";
-import { formatPhase, isPeak } from "./peak.ts";
+import { billingMultiplier, formatPhase, isPeak } from "./peak.ts";
 
 // ---------------------------------------------------------------------------
 // Telemetry store
@@ -64,6 +65,57 @@ const calculateCost = (
     ...cost,
     total: cost.input + cost.output + cost.cacheRead + cost.cacheWrite,
   };
+};
+
+// The four cost fields scale together and `total` is recomputed from them, the
+// same invariant pi holds: only the money moves, never the token counts.
+export const scaleCost = (cost: UsageCost, multiplier: number): UsageCost => {
+  const scaled = {
+    cacheRead: cost.cacheRead * multiplier,
+    cacheWrite: cost.cacheWrite * multiplier,
+    input: cost.input * multiplier,
+    output: cost.output * multiplier,
+  };
+  return {
+    ...scaled,
+    total: scaled.input + scaled.output + scaled.cacheRead + scaled.cacheWrite,
+  };
+};
+
+// What a request cost at the rate in force when it was sent. Built from token
+// counts rather than from a reported cost, so a message pi has already corrected
+// cannot be scaled twice.
+export const billedCost = (
+  tokens: {
+    cacheRead: number;
+    cacheWrite: number;
+    input: number;
+    output: number;
+  },
+  model: string,
+  instant: Date
+): UsageCost =>
+  scaleCost(
+    calculateCost(
+      tokens.input,
+      tokens.output,
+      tokens.cacheRead,
+      tokens.cacheWrite,
+      model
+    ),
+    billingMultiplier(instant)
+  );
+
+// The rate in force right now, per million tokens, in the shape the pricing page
+// quotes it (input/output). The caller styles it: the footer row is rendered
+// verbatim by pi-statusline.
+export const formatRate = (
+  cost: TokenCost,
+  instant: Date = new Date()
+): string => {
+  const multiplier = billingMultiplier(instant);
+  const usd = (value: number): string => `$${(value * multiplier).toFixed(2)}`;
+  return `${usd(cost.input)}/${usd(cost.output)}/M`;
 };
 
 export const createTelemetryStore = (
@@ -221,8 +273,13 @@ export const createTelemetryStore = (
     );
     // The label is the host's job: pi-statusline prefixes the status key, and a
     // key listed in its extensionStatusRaw gets this value verbatim instead.
-    // Writing "ds" here too would double it in the first case.
-    const status = phase;
+    // Writing "ds" here too would double it in the first case. The rate rides on
+    // this row rather than a status key of its own: a second key is a second
+    // line, and this one already says when the rate next moves.
+    const rate = context.model?.cost
+      ? paint("muted", formatRate(context.model.cost))
+      : undefined;
+    const status = rate ? `${phase} · ${rate}` : phase;
     context.ui.setStatus(FOOTER_KEY, status);
     if (!balance) {
       return;

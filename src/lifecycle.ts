@@ -1,6 +1,7 @@
 import type {
   ExtensionAPI,
   ExtensionContext,
+  MessageEndEvent,
   TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import { type BalanceStore, collectUsageRecords } from "./balance.ts";
@@ -25,8 +26,8 @@ import {
   USAGE_ENTRY,
 } from "./config.ts";
 import { loadHolidayCalendar } from "./holidays.ts";
-import { nextPhaseChange, setHolidayDates } from "./peak.ts";
-import type { TelemetryStore } from "./telemetry.ts";
+import { billingMultiplier, nextPhaseChange, setHolidayDates } from "./peak.ts";
+import { billedCost, scaleCost, type TelemetryStore } from "./telemetry.ts";
 import type { ThreadStore } from "./threads.ts";
 
 // A boundary that has just passed must not spin the timer.
@@ -160,6 +161,38 @@ export const registerLifecycleHandlers = (
     return stripUnsupportedThinkingParameters(payload);
   });
 
+  // pi prices deepseek at one flat rate, so a message sent off-peak is recorded
+  // at twice what it cost. Hand the corrected message back to the host. The
+  // provider stamps its output before dispatch, so the message timestamp — not
+  // completion time — picks the side of the schedule: a response that lands
+  // after a boundary was still billed at the rate it was sent at. Tokens are
+  // untouched, only the money moves. The WeakSet covers a retry that re-delivers
+  // the same message, in either the original or the replaced identity.
+  const pricedMessages = new WeakSet<object>();
+  pi.on("message_end", (event: MessageEndEvent) => {
+    const { message } = event;
+    if (message.role !== "assistant" || !message.usage?.cost) {
+      return;
+    }
+    if (pricedMessages.has(message)) {
+      return;
+    }
+    pricedMessages.add(message);
+    const multiplier = billingMultiplier(new Date(message.timestamp));
+    if (multiplier === 1) {
+      return;
+    }
+    const replacement = {
+      ...message,
+      usage: {
+        ...message.usage,
+        cost: scaleCost(message.usage.cost, multiplier),
+      },
+    };
+    pricedMessages.add(replacement);
+    return { message: replacement };
+  });
+
   pi.on("turn_end", (event: TurnEndEvent, context) => {
     if (!runtimeState.enabled) {
       return;
@@ -178,7 +211,18 @@ export const registerLifecycleHandlers = (
       telemetry.record({
         cacheRead: usage.cacheRead,
         cacheWrite: usage.cacheWrite,
-        cost: usage.cost,
+        // Priced from the token counts, not from `usage.cost`: the ledger must
+        // not inherit a correction that pi has already applied.
+        cost: billedCost(
+          {
+            cacheRead: usage.cacheRead,
+            cacheWrite: usage.cacheWrite,
+            input: usage.input,
+            output: usage.output,
+          },
+          message.model ?? MODEL_ID,
+          new Date(message.timestamp)
+        ),
         input: usage.input,
         model: message.model ?? MODEL_ID,
         output: usage.output,

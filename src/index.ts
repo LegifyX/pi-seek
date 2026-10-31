@@ -44,7 +44,7 @@ import {
   RetryWaitAbortedError,
   withRetries,
 } from "./retry.ts";
-import { createTelemetryStore } from "./telemetry.ts";
+import { billedCost, createTelemetryStore, formatRate, scaleCost } from "./telemetry.ts";
 import {
   createThreadStore,
   trimThreadForContext,
@@ -64,6 +64,7 @@ export { toStrictSchema } from "./strict-schema.ts";
 export const __test = {
   applyDefaultReasoningEffort,
   backoffDelayMs,
+  billedCost,
   buildChatBody,
   buildFimBody,
   buildPrefixBody,
@@ -77,6 +78,7 @@ export const __test = {
   createThreadStore,
   extractRequiredFunctionCall,
   extractResponsesText,
+  formatRate,
   formatTimeNote,
   isContextLengthError,
   isPersistableItem,
@@ -84,6 +86,7 @@ export const __test = {
   prependTimeNote,
   RetryWaitAbortedError,
   runChatWithRecovery,
+  scaleCost,
   stripUnsupportedThinkingParameters,
   summarizeUsage,
   systemHasTimeNote,

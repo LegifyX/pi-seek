@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  billingMultiplier,
   formatPhase,
   isPeak,
   nextPhaseChange,
@@ -48,10 +49,10 @@ test("isPeak: the phase follows the UTC+8 calendar, not UTC", () => {
 });
 
 test("formatPhase: renders the footer token", () => {
-  assert.equal(formatPhase(at("2026-09-04T02:00:00Z")), "peak");
+  assert.equal(formatPhase(at("2026-09-04T02:00:00Z")), "peak until 12:00");
   assert.equal(
     formatPhase(at("2026-09-04T10:00:00Z")),
-    "off-peak 50% until 09:00"
+    "off-peak 50% until Mon 09:00"
   );
 });
 
@@ -64,7 +65,7 @@ test("formatPhase: the off-peak end is the next window on the billing calendar",
   );
   assert.equal(
     formatPhase(at("2026-09-05T04:00:00Z")),
-    "off-peak 50% until 09:00"
+    "off-peak 50% until Mon 09:00"
   );
 });
 
@@ -116,6 +117,26 @@ test("isPeak: a make-up working Saturday is still off-peak", () => {
   assert.equal(isPeak(at("2026-10-10T02:00:00Z")), false); // Saturday
 });
 
+test("billingMultiplier: peak bills full rate, off-peak and holidays half", () => {
+  setHolidayDates([]);
+  // Friday 10:00 local, Saturday 10:00 local, and the same Friday once it is a
+  // statutory holiday: 1, 0.5, 0.5.
+  assert.equal(billingMultiplier(at("2026-09-04T02:00:00Z")), 1);
+  assert.equal(billingMultiplier(at("2026-09-05T02:00:00Z")), 0.5);
+  setHolidayDates(NATIONAL_DAY_WEEK);
+  try {
+    assert.equal(billingMultiplier(at("2026-10-02T02:00:00Z")), 0.5);
+  } finally {
+    setHolidayDates([]);
+  }
+});
+
+// The multiplier runs inside a lifecycle handler on every message, so an
+// unreadable instant must leave the recorded rate alone rather than throw.
+test("billingMultiplier: an invalid instant keeps the recorded rate", () => {
+  assert.equal(billingMultiplier(new Date(Number.NaN)), 1);
+});
+
 test("nextPhaseChange and formatPhase skip the holiday run", () => {
   setHolidayDates(NATIONAL_DAY_WEEK);
   try {
@@ -127,7 +148,9 @@ test("nextPhaseChange and formatPhase skip the holiday run", () => {
       nextPhaseChange(offPeak).toISOString(),
       "2026-10-08T01:00:00.000Z"
     );
-    assert.equal(formatPhase(offPeak), "off-peak 50% until 09:00");
+    // The wait is longer than a week, so the weekday alone would name two
+    // different Mondays: the date is shown instead.
+    assert.equal(formatPhase(offPeak), "off-peak 50% until 10-08 09:00");
   } finally {
     setHolidayDates([]);
   }

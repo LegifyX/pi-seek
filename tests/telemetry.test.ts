@@ -430,3 +430,44 @@ test("setFooter with no context is a no-op", () => {
   store.record(pending(1) as Parameters<typeof store.record>[0]);
   assert.doesNotThrow(() => store.setFooter(undefined));
 });
+
+// The rate the footer quotes, in the pricing page's shape, at the multiplier in
+// force at that instant. Flash is registered at its peak rate.
+test("formatRate: peak quotes the registered rate, off-peak quotes half", () => {
+  const peak = { cacheRead: 0, cacheWrite: 0, input: 0.3, output: 1.2 };
+  assert.equal(
+    __test.formatRate(peak, new Date("2026-09-04T02:00:00Z")),
+    "$0.30/$1.20/M"
+  );
+  assert.equal(
+    __test.formatRate(peak, new Date("2026-09-05T02:00:00Z")),
+    "$0.15/$0.60/M"
+  );
+});
+
+test("scaleCost: the four fields scale and total is recomputed, not scaled", () => {
+  const cost = { cacheRead: 0.01, cacheWrite: 0.02, input: 0.3, output: 0.6 };
+  const scaled = __test.scaleCost({ ...cost, total: 0.93 }, 0.5);
+  assert.deepEqual(
+    { ...scaled, total: Math.round(scaled.total * 1000) / 1000 },
+    { cacheRead: 0.005, cacheWrite: 0.01, input: 0.15, output: 0.3, total: 0.465 }
+  );
+});
+
+// The ledger prices a request from its token counts, so a message whose cost pi
+// has already corrected cannot be scaled twice.
+test("billedCost: priced from tokens at the hour the request was sent", () => {
+  const tokens = { cacheRead: 0, cacheWrite: 0, input: 1_000_000, output: 0 };
+  const peak = __test.billedCost(
+    tokens,
+    "deepseek-v4-flash",
+    new Date("2026-09-04T02:00:00Z")
+  );
+  const offPeak = __test.billedCost(
+    tokens,
+    "deepseek-v4-flash",
+    new Date("2026-09-05T02:00:00Z")
+  );
+  assert.equal(peak.total, 0.3);
+  assert.equal(offPeak.total, 0.15);
+});

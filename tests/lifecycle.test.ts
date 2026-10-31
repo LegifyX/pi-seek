@@ -28,7 +28,7 @@ import {
   registerLifecycleHandlers,
   registerProvider,
 } from "../src/lifecycle.ts";
-import { createTelemetryStore, type TelemetryStore } from "../src/telemetry.ts";
+import { billedCost, createTelemetryStore, type TelemetryStore } from "../src/telemetry.ts";
 import { createThreadStore, type ThreadStore } from "../src/threads.ts";
 
 interface RegisteredModel {
@@ -235,7 +235,11 @@ const getHandler = (pi: RecordingHandlers, event: string): LifecycleHandler => {
   return handler;
 };
 
-const FOOTER_PATTERN = /^[☀☾] (?:peak|off-peak 50% until \d\d:\d\d)$/;
+// The row now carries the rate beside the phase, and a flip on another day names
+// the weekday, so this accepts `until 14:00`, `until Mon 09:00` and
+// `until 10-08 09:00`, with or without the rate.
+const FOOTER_PATTERN =
+  /^[☀☾] (?:peak|off-peak 50%) until (?:[A-Z][a-z]{2} |\d\d-\d\d )?\d\d:\d\d(?: · \$\d+\.\d\d\/\$\d+\.\d\d\/M)?$/;
 const BALANCE_SUFFIX_PATTERN = / · \$5\.20$/;
 
 const asObject = (value: unknown): Record<string, unknown> => {
@@ -338,6 +342,8 @@ test("before_provider_request preserves temperature/top_p when reasoning effort 
 // turn_end
 // ---------------------------------------------------------------------------
 
+const PEAK_SENT_AT = Date.parse("2026-09-04T02:00:00Z");
+
 const usage = {
   cacheRead: 20,
   cacheWrite: 0,
@@ -373,6 +379,7 @@ test("turn_end records a ds-usage entry for a matching assistant message", () =>
       model: MODEL_ID,
       provider: PROVIDER_ID,
       role: "assistant",
+      timestamp: PEAK_SENT_AT,
       usage,
     }),
     context
@@ -391,7 +398,109 @@ test("turn_end records a ds-usage entry for a matching assistant message", () =>
   assert.equal(record.totalTokens, usage.totalTokens);
   assert.equal(record.model, MODEL_ID);
   assert.equal(record.source, "agent");
-  assert.deepEqual(record.cost, usage.cost);
+  // The ledger holds the billed cost, priced from the tokens at the rate in
+  // force when the message was sent — not the flat rate pi reported.
+  assert.deepEqual(
+    record.cost,
+    billedCost(
+      {
+        cacheRead: usage.cacheRead,
+        cacheWrite: usage.cacheWrite,
+        input: usage.input,
+        output: usage.output,
+      },
+      MODEL_ID,
+      new Date(PEAK_SENT_AT)
+    )
+  );
+});
+
+test("turn_end prices an off-peak message at half the peak ledger entry", () => {
+  const { pi, telemetry } = createHandlerHarness();
+  const handler = getHandler(pi, "turn_end");
+  const { context } = createContext();
+
+  const sent = (timestamp: number): number => {
+    handler(
+      turnEnd({
+        model: MODEL_ID,
+        provider: PROVIDER_ID,
+        role: "assistant",
+        timestamp,
+        usage,
+      }),
+      context
+    );
+    const recorded = telemetry.getLastUsage();
+    assert.ok(recorded, "turn_end must record a usage entry");
+    return recorded.cost.total;
+  };
+
+  // 2026-09-05 is a Saturday: off-peak all day, so half the peak entry.
+  const peak = sent(PEAK_SENT_AT);
+  const offPeak = sent(Date.parse("2026-09-05T02:00:00Z"));
+  assert.ok(peak > 0);
+  assert.ok(Math.abs(offPeak - peak / 2) < peak * 1e-9);
+});
+
+const messageEnd = (
+  message: Record<string, unknown>
+): Record<string, unknown> => ({ message, type: "message_end" });
+
+test("message_end prices an off-peak message at half the recorded cost", () => {
+  const { pi } = createHandlerHarness();
+  const handler = getHandler(pi, "message_end");
+  const { context } = createContext();
+  // 2026-09-05 is a Saturday: off-peak all day.
+  const message = {
+    model: MODEL_ID,
+    provider: PROVIDER_ID,
+    role: "assistant",
+    timestamp: Date.parse("2026-09-05T02:00:00Z"),
+    usage,
+  };
+
+  const result = handler(messageEnd(message), context) as
+    | { message: { usage: typeof usage } }
+    | undefined;
+  assert.ok(result?.message, "off-peak must return a corrected message");
+  const corrected = result.message.usage;
+  assert.equal(corrected.cost.total, usage.cost.total / 2);
+  assert.equal(corrected.cost.input, usage.cost.input / 2);
+  // Tokens are what pi reports back to its own accounting: never scaled.
+  assert.equal(corrected.input, usage.input);
+  assert.equal(corrected.output, usage.output);
+  assert.equal(corrected.totalTokens, usage.totalTokens);
+  // The message pi handed us is not mutated in place.
+  assert.equal(usage.cost.total, 0.031);
+});
+
+test("message_end leaves a peak message, a retry, and user text alone", () => {
+  const { pi } = createHandlerHarness();
+  const handler = getHandler(pi, "message_end");
+  const { context } = createContext();
+  // Friday 10:00 local: the recorded rate is already the billed rate.
+  const peak = {
+    model: MODEL_ID,
+    provider: PROVIDER_ID,
+    role: "assistant",
+    timestamp: PEAK_SENT_AT,
+    usage,
+  };
+  assert.equal(handler(messageEnd(peak), context), undefined);
+
+  const offPeak = {
+    ...peak,
+    timestamp: Date.parse("2026-09-05T02:00:00Z"),
+  };
+  assert.ok(handler(messageEnd(offPeak), context));
+  // A retry that re-delivers the same message must not halve it twice.
+  assert.equal(handler(messageEnd(offPeak), context), undefined);
+
+  assert.equal(
+    handler(messageEnd({ content: "hi", role: "user" }), context),
+    undefined
+  );
 });
 
 test("turn_end is a no-op for user messages, other providers, missing usage, and when disabled", () => {

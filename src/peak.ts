@@ -6,8 +6,11 @@
 // the billing calendar, not UTC, and the weekend rule is gated on the instant
 // being classified rather than on "now".
 const CALENDAR_OFFSET_MINUTES = 8 * 60;
+const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
+const OFF_PEAK_MULTIPLIER = 0.5;
 const OFF_PEAK_PERCENT = 50;
+const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const PEAK_WEEKDAYS = [1, 2, 3, 4, 5]; // ISO, on the billing calendar
 const PEAK_WINDOWS = [
   { end: 12 * 60, start: 9 * 60 },
@@ -68,10 +71,43 @@ export const isPeak = (instant: Date = new Date()): boolean => {
 // Footer token: "peak" or "off-peak 50% until HH:mm". The clock is read on the
 // billing calendar, so it matches the times in the pricing doc rather than the
 // user's timezone.
-export const formatPhase = (instant: Date = new Date()): string =>
-  isPeak(instant)
-    ? "peak"
-    : `off-peak ${OFF_PEAK_PERCENT}% until ${clockTime(nextPhaseChange(instant))}`;
+export const formatPhase = (instant: Date = new Date()): string => {
+  const until = phaseTarget(instant, nextPhaseChange(instant));
+  return isPeak(instant)
+    ? `peak until ${until}`
+    : `off-peak ${OFF_PEAK_PERCENT}% until ${until}`;
+};
+
+// What a token costs right now, relative to the rate the provider is registered
+// at (the peak rate). The schedule is the only thing that moves a bill, so this
+// factor is the one every cost path applies. An unreadable instant leaves the
+// recorded rate alone: this runs inside a lifecycle handler that must not throw.
+export const billingMultiplier = (instant: Date = new Date()): number => {
+  if (Number.isNaN(instant.getTime())) {
+    return 1;
+  }
+  return isPeak(instant) ? 1 : OFF_PEAK_MULTIPLIER;
+};
+
+// A flip later today needs only its clock. A flip on another day names the
+// weekday, because "until 09:00" reads like nine this morning; a wait longer
+// than a week (a holiday run) names the date, because two Mondays apart carry
+// the same weekday. Both are read on the billing calendar, like isPeak.
+const phaseTarget = (instant: Date, target: Date): string => {
+  const from = billingDateKey(billingClock(instant));
+  const to = billingDateKey(billingClock(target));
+  const days = Math.round(
+    (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS
+  );
+  const clock = clockTime(target);
+  if (days <= 0) {
+    return clock;
+  }
+  if (days < 7) {
+    return `${WEEKDAY_NAMES[isoWeekday(billingClock(target)) - 1]} ${clock}`;
+  }
+  return `${to.slice(5)} ${clock}`;
+};
 
 const clockTime = (instant: Date): string => {
   const billing = billingClock(instant);
