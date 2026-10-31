@@ -453,7 +453,7 @@ test("model_select refreshes the footer when the DeepSeek provider is active", (
   assert.match(calls[0].value ?? "", FOOTER_PATTERN);
 });
 
-test("model_select clears the footer for a non-DeepSeek model", () => {
+test("model_select keeps the footer on a non-DeepSeek model", () => {
   const { pi, telemetry } = createHandlerHarness();
   telemetry.record(recordedUsage);
   const handler = getHandler(pi, "model_select");
@@ -471,7 +471,7 @@ test("model_select clears the footer for a non-DeepSeek model", () => {
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].key, FOOTER_KEY);
-  assert.equal(calls[0].value, undefined);
+  assert.match(calls[0].value ?? "", FOOTER_PATTERN);
 });
 
 const settle = (): Promise<void> =>

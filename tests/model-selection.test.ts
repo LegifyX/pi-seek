@@ -32,11 +32,11 @@ test("isSupportedModelId guards the supported set", () => {
   assert.equal(isSupportedModelId(42), false);
 });
 
-test("V4 Pro prices match the Models & Pricing page", () => {
+test("V4 Pro prices match the peak rate on the Models & Pricing page", () => {
   assert.deepEqual(MODEL_COSTS[PRO_MODEL_ID], {
-    cacheRead: 0.003_625,
+    cacheRead: 0.044,
     cacheWrite: 0,
-    input: 0.435,
-    output: 0.87,
+    input: 1.32,
+    output: 3.96,
   });
 });

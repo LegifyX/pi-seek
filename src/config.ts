@@ -120,20 +120,23 @@ export interface TokenCost {
   output: number;
 }
 
-// Prices per 1M tokens (DeepSeek Models & Pricing, 2026-08-12). DeepSeek does
-// not publish a cache-write price for either model.
+// USD per 1M tokens at the PEAK rate (DeepSeek Models & Pricing, verified
+// 2026-10-31 against api-docs.deepseek.com/quick_start/pricing/): flash cache
+// hit 0.006 / miss 0.30 / output 1.20, pro 0.044 / 1.32 / 3.96. Off-peak is
+// half, so a peak base keeps every recorded cost correctable by the
+// pi-peak-hours multiplier. DeepSeek publishes no cache-write price.
 export const MODEL_COSTS: Record<ModelId, TokenCost> = {
   [FLASH_MODEL_ID]: {
-    cacheRead: 0.0028,
+    cacheRead: 0.006,
     cacheWrite: 0,
-    input: 0.14,
-    output: 0.28,
+    input: 0.3,
+    output: 1.2,
   },
   [PRO_MODEL_ID]: {
-    cacheRead: 0.003_625,
+    cacheRead: 0.044,
     cacheWrite: 0,
-    input: 0.435,
-    output: 0.87,
+    input: 1.32,
+    output: 3.96,
   },
 };
 

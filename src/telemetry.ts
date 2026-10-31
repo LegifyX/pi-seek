@@ -10,7 +10,6 @@ import {
   isJsonObject,
   MODEL_ID,
   type PendingUsageRecord,
-  PROVIDER_ID,
   TOKENS_PER_MILLION,
   USAGE_HISTORY_LIMIT,
   type UsageCost,
@@ -200,17 +199,23 @@ export const createTelemetryStore = (
     if (!context) {
       return;
     }
-    if (!runtimeState.enabled || context.model?.provider !== PROVIDER_ID) {
+    if (!runtimeState.enabled) {
       context.ui.setStatus(FOOTER_KEY, undefined);
       return;
     }
     // This row carries what the host cannot know: the billing window and the
     // wallet. Cache and cost already have segments of their own. The value is
     // rendered verbatim by the statusline plugin, so it styles itself, and every
-    // run ends on a reset. See "extensionStatusRaw" in pi-statusline.
-    const { theme } = context.ui;
+    // run ends on a reset. See "extensionStatusRaw" in pi-statusline. It belongs
+    // to the account, not to the selected model: the phase is a clock fact and
+    // the wallet is fetched from the stored key, so it stays visible on every
+    // model. A status row must never throw, so an unstyled host renders plain.
+    const paint = (
+      color: "success" | "warning" | "muted",
+      text: string
+    ): string => (context.ui.theme ? context.ui.theme.fg(color, text) : text);
     const peak = isPeak();
-    const phase = theme.fg(
+    const phase = paint(
       peak ? "warning" : "success",
       `${peak ? "☀" : "☾"} ${formatPhase()}`
     );
@@ -228,7 +233,7 @@ export const createTelemetryStore = (
     balance
       .get()
       .then((state) => {
-        if (!runtimeState.enabled || context.model?.provider !== PROVIDER_ID) {
+        if (!runtimeState.enabled) {
           return;
         }
         const balanceLabel = state.isAvailable
@@ -236,7 +241,7 @@ export const createTelemetryStore = (
           : "unavailable";
         context.ui.setStatus(
           FOOTER_KEY,
-          `${status} · ${theme.fg("muted", balanceLabel)}`
+          `${status} · ${paint("muted", balanceLabel)}`
         );
       })
       .catch(() => undefined);

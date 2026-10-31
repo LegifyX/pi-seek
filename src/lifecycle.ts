@@ -1,5 +1,6 @@
 import type {
   ExtensionAPI,
+  ExtensionContext,
   TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import { type BalanceStore, collectUsageRecords } from "./balance.ts";
@@ -23,8 +24,13 @@ import {
   THINKING_LEVEL_MAP,
   USAGE_ENTRY,
 } from "./config.ts";
+import { loadHolidayCalendar } from "./holidays.ts";
+import { nextPhaseChange, setHolidayDates } from "./peak.ts";
 import type { TelemetryStore } from "./telemetry.ts";
 import type { ThreadStore } from "./threads.ts";
+
+// A boundary that has just passed must not spin the timer.
+const MIN_PHASE_TIMER_MS = 1000;
 
 // ---------------------------------------------------------------------------
 // Provider and lifecycle registration
@@ -118,6 +124,30 @@ export const registerLifecycleHandlers = (
   threads: ThreadStore,
   balance?: BalanceStore
 ): void => {
+  // The footer quotes the billing window, which changes at wall-clock
+  // boundaries while a session sits idle and pi fires no event. One timer for
+  // the next boundary keeps it honest; it never holds the process open.
+  let phaseTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastContext: ExtensionContext | undefined;
+
+  const refreshFooter = (context: ExtensionContext): void => {
+    lastContext = context;
+    telemetry.setFooter(context, balance);
+    if (phaseTimer) {
+      clearTimeout(phaseTimer);
+    }
+    const delay = nextPhaseChange().getTime() - Date.now();
+    phaseTimer = setTimeout(
+      () => {
+        if (lastContext) {
+          refreshFooter(lastContext);
+        }
+      },
+      Math.max(MIN_PHASE_TIMER_MS, delay)
+    );
+    phaseTimer.unref?.();
+  };
+
   pi.on("before_provider_request", (event) => {
     if (!runtimeState.enabled) {
       return;
@@ -157,18 +187,36 @@ export const registerLifecycleHandlers = (
         totalTokens: usage.totalTokens,
       })
     );
-    telemetry.setFooter(context, balance);
+    refreshFooter(context);
   });
 
   pi.on("model_select", (_event, context) => {
-    telemetry.setFooter(context, balance);
+    refreshFooter(context);
   });
   pi.on("session_start", (_event, context) => {
     threads.restore(context);
     telemetry.restore(collectUsageRecords(context.sessionManager.getBranch()));
+    refreshFooter(context);
+    // The holiday calendar decides a fraction of the year; load it beside the
+    // session rather than gating the footer on a network round trip.
+    loadHolidayCalendar()
+      .then(({ dates }) => {
+        setHolidayDates(dates);
+        if (lastContext) {
+          refreshFooter(lastContext);
+        }
+      })
+      .catch(() => undefined);
   });
   pi.on("session_tree", (_event, context) => {
     threads.restore(context);
     telemetry.restore(collectUsageRecords(context.sessionManager.getBranch()));
+    refreshFooter(context);
+  });
+  pi.on("session_shutdown", () => {
+    if (phaseTimer) {
+      clearTimeout(phaseTimer);
+      phaseTimer = undefined;
+    }
   });
 };

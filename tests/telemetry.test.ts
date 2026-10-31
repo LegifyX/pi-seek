@@ -303,7 +303,7 @@ test("record: preserves a finite reasoning value", () => {
   assert.equal(record.reasoning, 5);
 });
 
-test("cost math: input 1M -> 0.14, output 1M -> 0.28, cacheRead 1M -> 0.0028", () => {
+test("cost math: input 1M -> 0.30, output 1M -> 1.20, cacheRead 1M -> 0.006", () => {
   const store = makeStore();
   const inputOnly = store.record(
     store.mapChatUsage(
@@ -311,14 +311,14 @@ test("cost math: input 1M -> 0.14, output 1M -> 0.28, cacheRead 1M -> 0.0028", (
       "chat"
     )
   );
-  assert.equal(inputOnly.cost.input, 0.14);
+  assert.equal(inputOnly.cost.input, 0.3);
   const outputOnly = store.record(
     store.mapChatUsage(
       { completion_tokens: 1_000_000, prompt_tokens: 0 },
       "chat"
     )
   );
-  assert.equal(outputOnly.cost.output, 0.28);
+  assert.equal(outputOnly.cost.output, 1.2);
   const cacheOnly = store.record(
     store.mapChatUsage(
       {
@@ -329,7 +329,7 @@ test("cost math: input 1M -> 0.14, output 1M -> 0.28, cacheRead 1M -> 0.0028", (
       "chat"
     )
   );
-  assert.equal(cacheOnly.cost.cacheRead, 0.0028);
+  assert.equal(cacheOnly.cost.cacheRead, 0.006);
   assert.equal(cacheOnly.cost.cacheWrite, 0);
   const combined = store.record(
     store.mapChatUsage(
@@ -351,7 +351,7 @@ test("cost math: input 1M -> 0.14, output 1M -> 0.28, cacheRead 1M -> 0.0028", (
   assert.ok(combined.cost.total > 0);
 });
 
-test("cost math for V4 Pro: input 1M -> 0.435, output 1M -> 0.87, cacheRead 1M -> 0.003625", () => {
+test("cost math for V4 Pro: input 1M -> 1.32, output 1M -> 3.96, cacheRead 1M -> 0.044", () => {
   const store = makeStore();
   const inputOnly = store.record(
     store.mapChatUsage(
@@ -361,7 +361,7 @@ test("cost math for V4 Pro: input 1M -> 0.435, output 1M -> 0.87, cacheRead 1M -
     )
   );
   assert.equal(inputOnly.model, "deepseek-v4-pro");
-  assert.equal(inputOnly.cost.input, 0.435);
+  assert.equal(inputOnly.cost.input, 1.32);
   const outputOnly = store.record(
     store.mapChatUsage(
       { completion_tokens: 1_000_000, prompt_tokens: 0 },
@@ -369,7 +369,7 @@ test("cost math for V4 Pro: input 1M -> 0.435, output 1M -> 0.87, cacheRead 1M -
       "deepseek-v4-pro"
     )
   );
-  assert.equal(outputOnly.cost.output, 0.87);
+  assert.equal(outputOnly.cost.output, 3.96);
   const cacheOnly = store.record(
     store.mapChatUsage(
       {
@@ -381,7 +381,7 @@ test("cost math for V4 Pro: input 1M -> 0.435, output 1M -> 0.87, cacheRead 1M -
       "deepseek-v4-pro"
     )
   );
-  assert.equal(cacheOnly.cost.cacheRead, 0.003_625);
+  assert.equal(cacheOnly.cost.cacheRead, 0.044);
   assert.equal(cacheOnly.cost.cacheWrite, 0);
 });
 

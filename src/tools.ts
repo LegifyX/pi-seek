@@ -273,7 +273,7 @@ const registerChatTools = (pi: ExtensionAPI, services: ToolServices): void => {
         ]).items;
         thread.round += 1;
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-        telemetry.setFooter(context, services.balance);
+        telemetry.setFooter(context);
 
         const statusNote =
           outcome.result.status !== undefined &&
@@ -379,7 +379,7 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
         const finishReason = getString(choice, "finish_reason");
         const usage = telemetry.mapChatUsage(response.usage, "prefix");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-        telemetry.setFooter(context, services.balance);
+        telemetry.setFooter(context);
         const rawUsage = isJsonObject(response.usage)
           ? response.usage
           : undefined;
@@ -454,7 +454,7 @@ const registerBetaTools = (pi: ExtensionAPI, services: ToolServices): void => {
         const finishReason = getString(choice, "finish_reason");
         const usage = telemetry.mapChatUsage(response.usage, "fim");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-        telemetry.setFooter(context, services.balance);
+        telemetry.setFooter(context);
         const rawUsage = isJsonObject(response.usage)
           ? response.usage
           : undefined;
@@ -534,7 +534,7 @@ const registerResponsesTools = (
         const { result } = outcome;
         const usage = telemetry.mapResponsesUsage(result.usage, "search");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-        telemetry.setFooter(context, services.balance);
+        telemetry.setFooter(context);
         return {
           content: [
             { text: result.text || "(no answer)", type: "text" as const },
@@ -656,7 +656,7 @@ const registerFunctionTool = (
         const message = getObject(getFirstChoice(response), "message");
         const usage = telemetry.mapChatUsage(response.usage, "function");
         pi.appendEntry(USAGE_ENTRY, telemetry.record(usage));
-        telemetry.setFooter(context, services.balance);
+        telemetry.setFooter(context);
 
         const { calledName, rawArguments } = extractRequiredFunctionCall(
           message ?? {},

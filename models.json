@@ -24,12 +24,14 @@
             "xhigh": "max",
             "max": "max"
           },
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "cost": {
-            "input": 0.14,
-            "output": 0.28,
-            "cacheRead": 0.0028,
-            "cacheWrite": 0
+            "cacheRead": 0.006,
+            "cacheWrite": 0,
+            "input": 0.3,
+            "output": 1.2
           },
           "contextWindow": 1048576,
           "maxTokens": 393216
@@ -47,12 +49,14 @@
             "xhigh": "max",
             "max": "max"
           },
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "cost": {
-            "input": 0.435,
-            "output": 0.87,
-            "cacheRead": 0.003625,
-            "cacheWrite": 0
+            "cacheRead": 0.044,
+            "cacheWrite": 0,
+            "input": 1.32,
+            "output": 3.96
           },
           "contextWindow": 1048576,
           "maxTokens": 393216
